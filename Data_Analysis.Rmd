@@ -1,0 +1,242 @@
+---
+title: "Urban Ocean Analysis 2023 "
+output: html_notebook
+---
+
+
+
+```{r}
+
+# Specific plotting tools
+library(plotly)
+library(ggpubr)
+library(paletteer)
+library(viridis)
+library(cowplot)
+library(leaflet)
+library(readxl)
+library(tidyverse)
+source("Code/Functions.R")
+```
+
+Read in data
+
+```{r}
+
+ASV_12S <- read_csv("Data_import/MiFish-U_species_table.csv")  %>% 
+  filter(Group != "Total") %>%  select(!Total)
+
+samp_data_12S <- read_excel("Data_import/VeDNA_UrbanOcean2023_Metadata copy.xlsx", 
+    sheet = "12S_Library", col_types = c("text", 
+        "text", "date", "text", "text", "text", 
+        "text", "text", "text", "text", "text", 
+        "text", "numeric", "text", "text", 
+        "numeric", "numeric", "numeric"))
+
+station_data_12S <- read_excel("Data_import/VeDNA_UrbanOcean2023_Metadata copy.xlsx", sheet = "Stations")
+samp_data_12S
+
+UO_12S <- ASV_12S %>%
+  pivot_longer(!1:4, names_to = "Library_ID", values_to = "Abundance") %>% 
+  left_join(samp_data_12S, by = "Library_ID") %>% 
+  left_join(station_data_12S, by = "Station_ID")
+
+
+UO_12S
+```
+
+
+Plot sequencing depth and select valid samples
+
+```{r}
+UO_12S %>% 
+  filter(is.na(Station_ID) == FALSE) %>% 
+  group_by(Library_ID, Station_ID) %>% 
+  reframe(Abundance = sum(Abundance)) %>% 
+  ggplot() +
+  geom_point(aes(Station_ID, Abundance))
+
+valid_samples <- UO_12S %>% 
+  filter(is.na(Station_ID) == FALSE) %>% 
+  group_by(Library_ID) %>% 
+  reframe(Abundance = sum(Abundance)) %>%
+  filter(Abundance > 25000) %>% 
+  pull(Library_ID)
+
+valid_samples
+
+```
+
+```{r}
+UO_12S
+OU_12S_Index <- UO_12S %>% 
+  filter(Library_ID %in% valid_samples) %>%
+  mutate(Taxa = TaxonName,
+         Abundance = Abundance,
+         Depth = Depth,
+         Date = Sample_Date) %>% 
+  collapseRAindex(Library_ID, Location, Lat, Long, Station_ID)
+
+
+OU_12S_Index %>%
+  filter(Abundance > 0) %>%
+  group_by(Taxa) %>% 
+  mutate(maxRA = median(RA)) %>%
+  ungroup() %>% 
+  mutate(Taxa = fct_reorder(Taxa, -maxRA)) %>% 
+  ggplot() +
+  geom_boxplot(aes(Taxa, RA)) +
+  theme_minimal_hgrid(font_size = 10) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1,
+                                   face = "italic"),
+        panel.background = element_rect(fill = '#F5F5F5', colour = 'darkgrey')) +
+  scale_y_continuous(trans='log10')
+
+
+OU_12S_Index %>% 
+  select(Taxa) %>% unique %>% 
+  write_csv("Data_output/Taxa.csv")
+
+```
+
+
+
+
+```{r}
+
+OU_12S_Index %>% 
+  group_by(Taxa, Date, Station_ID, Long, Lat) %>% 
+  summarise(RA_Index = mean(RA_Index)*75) %>%
+  mutate(Month = month(Date))
+  
+  filter(Taxa == "Clupeinae_Clupea_pallasii",
+         Month == 8) %>% 
+  leaflet() %>%
+  addTiles() %>% 
+  addProviderTiles(providers$Esri.WorldImagery) %>%
+  setView(-123.1, 49.30, zoom = 11) %>% 
+  addCircles(~Long, ~Lat, popup = ~Station_ID, weight = ~RA_Index, color = "red")
+```
+
+
+```{r}
+OU_12S_Index <- UO_12S %>%
+  mutate(Taxa = paste(Genus, Species, sep = " ")) %>% 
+  left_join(common_names, by = "Taxa") %>% 
+  filter(Library_ID %in% valid_samples,
+         Group != "zMultiple",
+         Fish != "No") %>% 
+  mutate(Taxa = Name,
+         Abundance = Abundance,
+         Depth = Depth,
+         Date = Sample_Date) %>% 
+  collapseRAindex(Library_ID, Location, Lat, Long, Station_ID)
+
+  
+
+```
+
+
+```{r}
+mat <- OU_12S_Index %>%
+  #filter(month(Date) == 3) %>% 
+  select(Library_ID, Taxa, RA_Index) %>% 
+  pivot_wider(names_from = Taxa, values_from = RA_Index) %>% 
+  column_to_rownames("Library_ID") %>% 
+  as.matrix()
+
+mod <- vegan::metaMDS(mat, trymax = 20)
+plot(mod)
+
+
+{  Samples <- 
+    vegan::scores(mod)$sites %>% 
+    as.data.frame() %>%
+    rownames_to_column("Library_ID") %>% 
+    mutate(Layer = "Samples")
+  
+  Taxa <-
+    vegan::scores(mod)$species %>% 
+    as.data.frame() %>%
+    rownames_to_column("Taxa") %>% 
+    mutate(Layer = "Taxa")
+  
+  NMDS_res <- bind_rows(Samples, Taxa) %>% 
+    pivot_wider(names_from = Layer,
+              values_from = c(NMDS1, NMDS2))
+}
+
+
+
+
+OU_12S_Index %>%
+  #filter(month(Date) == 3) %>% 
+  mutate(season = factor(month(Date))) %>% 
+  left_join(NMDS_res, by = "Library_ID") %>% 
+  ggplot(aes(NMDS1_Samples, NMDS2_Samples)) +
+  #geom_text(aes(Taxa$NMDS1_Taxa, Taxa$NMDS2_Taxa, label = Taxa$Taxa),
+   #         size = 4, colour = "white", fontface = "italic") +
+  geom_point(aes(color = season), size = 3)
+
+Taxa$NMDS1_Taxa
+```
+
+
+```{r}
+plotNMDS <- function(x) {
+  
+
+mat <- COI_species %>%
+  mutate(Depth = factor(Depth)) %>% 
+  dplyr::filter(Depth %in% x) %>% 
+  dplyr::select(Library_ID, Taxa, RA_Index) %>% 
+  pivot_wider(names_from = Taxa, values_from = RA_Index) %>% 
+  column_to_rownames("Library_ID") %>% 
+  as.matrix()
+  
+  mat
+  
+mod <- metaMDS(mat, trymax = 20)
+
+# Extract NMDS data
+{  Samples <- 
+    scores(mod)$sites %>% 
+    as.data.frame() %>%
+    rownames_to_column("Library_ID") %>% 
+    mutate(Layer = "Samples")
+  
+  Taxa <-
+    scores(mod)$species %>% 
+    as.data.frame() %>%
+    rownames_to_column("Taxa") %>% 
+    mutate(Layer = "Taxa")
+  
+  NMDS_res <- bind_rows(Samples, Taxa) %>% 
+    pivot_wider(names_from = Layer,
+              values_from = c(NMDS1, NMDS2))
+}
+
+# Merge with metadata
+COI_species %>% 
+  dplyr::select(Date, Depth, Library_ID) %>%
+  mutate(Month = format(as.Date(Date), format="%m"),
+         Depth = factor(Depth)) %>%
+  left_join(NMDS_res, by = "Library_ID") %>% 
+  ggplot(aes(NMDS1_Samples, NMDS2_Samples)) +
+  geom_text(aes(NMDS1_Taxa, NMDS2_Taxa, label = Taxa),
+            size = 3, colour = "grey", fontface = "italic") +
+  geom_point(aes(color = Month, shape = Depth), size = 3) +
+  scale_color_manual(values = seasonal_colors)
+
+
+}
+
+
+renderPlot({
+  plotNMDS(input$Filter_depth)
+})
+
+```
+
+
+
