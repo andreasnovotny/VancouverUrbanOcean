@@ -19,12 +19,98 @@ library(tidyverse)
 source("Code/Functions.R")
 ```
 
-Read in data
+# Preparations
+
+Read in and merge sample data:
 
 ```{r}
 
+# Sequencing data
 ASV_12S <- read_csv("Data_import/MiFish-U_species_table.csv")  %>% 
   filter(Group != "Total") %>%  select(!Total)
+
+# Sample metadata
+VeDNA_UrbanOcean2023_sampledata <- read_excel("Data_import/VeDNA_UrbanOcean2023_sampledata.xlsx", 
+    col_types = c("text", "text", "text", 
+        "date", "text", "text", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "text", "text", "numeric", "numeric", 
+        "date", "text", "date", "numeric", 
+        "numeric", "text", "text", "text", 
+        "text", "numeric", "text", "text", 
+        "text"))
+
+# Sequencing pool metadata
+Sequencing_Pool_12S_VeDNA2023 <- read_excel("Data_import/Sequencing_Pool_12S-VeDNA2023.xlsx", 
+    col_types = c("text", "text", "text", 
+        "text", "text", "text", "text", "text", 
+        "text", "numeric", "text", "numeric", 
+        "numeric", "numeric", "numeric")) %>% 
+  filter(Pool_ID == "12S-VeDNA2023")
+
+# Merge sample and library metadata
+Sample_Data_12S <- VeDNA_UrbanOcean2023_sampledata %>% 
+  right_join(Sequencing_Pool_12S_VeDNA2023, by = "Sample_ID") %>% 
+  select(Library_ID, 1:15, 18, Library_Concentration, Volume_added) %>% 
+  mutate(Type = ifelse(is.na(Type), "PCRBlank", Type))
+
+# Merge metadata with sequencing data
+OU_12S <- ASV_12S %>% 
+  pivot_longer(!1:4, names_to = "Library_ID", values_to = "Abundance") %>% 
+  left_join(Sample_Data_12S, by = "Library_ID") %>% 
+  filter(is.na(Type) == FALSE)
+
+```
+Plot sequencing depth and remove bad samples.
+
+```{r}
+tmp <- OU_12S %>%
+    group_by(Library_ID, Type) %>% 
+    summarise(Library_Size = sum(Abundance)) %>% 
+    arrange(Library_Size)
+tmp
+  
+tmp$Index <- seq(nrow(tmp))
+
+tmp
+
+tmp %>% 
+  ggplot() +
+  geom_point(aes(Index, Library_Size,
+                 colour = Type,
+                 label = Library_ID),
+             size = 0.5) +
+  theme_cowplot(12) +
+  theme(aspect.ratio = 1,
+        strip.background =element_blank()) +
+  geom_abline(intercept = 10000, linetype = 4)
+
+ggsave("Figure_output/Sequencing_Depth.pdf", width = 7, height = 4.5)
+
+Good_OU_12S <- OU_12S %>% 
+  group_by(Library_ID) %>%
+  filter(sum(Abundance)>10000) %>% 
+  ungroup()
+
+Good_OU_12S
+
+```
+
+
+
+
+
+
+OLD: Remove!
+```{r}
+samp_data_12S <- read_excel("Data_import/VeDNA_UrbanOcean2023_Metadata copy.xlsx", 
+    sheet = "12S_Library", col_types = c("text", 
+        "text", "date", "text", "text", "text", 
+        "text", "text", "text", "text", "text", 
+        "text", "numeric", "text", "text", 
+        "numeric", "numeric", "numeric"))
+
+
 
 samp_data_12S <- read_excel("Data_import/VeDNA_UrbanOcean2023_Metadata copy.xlsx", 
     sheet = "12S_Library", col_types = c("text", 
@@ -32,6 +118,8 @@ samp_data_12S <- read_excel("Data_import/VeDNA_UrbanOcean2023_Metadata copy.xlsx
         "text", "text", "text", "text", "text", 
         "text", "numeric", "text", "text", 
         "numeric", "numeric", "numeric"))
+
+samp_data_12S
 
 station_data_12S <- read_excel("Data_import/VeDNA_UrbanOcean2023_Metadata copy.xlsx", sheet = "Stations")
 samp_data_12S
@@ -41,8 +129,19 @@ UO_12S <- ASV_12S %>%
   left_join(samp_data_12S, by = "Library_ID") %>% 
   left_join(station_data_12S, by = "Station_ID")
 
-
 UO_12S
+
+
+UO_12S %>% 
+  filter(Group == "MultipleHits")
+
+
+UO_12S %>% 
+  filter(Genus == "Sebastes",
+         Survey == "Pelagic")
+  group_by(Species) %>% 
+  summarise(Abundance = sum(Abundance))
+  pull(Species) %>% unique()
 ```
 
 
@@ -100,7 +199,7 @@ OU_12S_Index %>%
 ```
 
 
-
+# THIS IS WHERE THE MAP IS!!!!!
 
 ```{r}
 

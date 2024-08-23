@@ -53,6 +53,15 @@ valid_samples <- UO_12S %>%
   pull(Library_ID)
 
 
+UO_12S %>% 
+  filter(is.na(Station_ID) == FALSE) %>% 
+  group_by(Library_ID) %>% 
+  reframe(Abundance = sum(Abundance)) %>%
+  filter(Abundance > 25000) %>% 
+  pull(Library_ID) ->
+test
+
+
 common_names <- read_excel("Data_output/Common_names.xlsx")
 
 
