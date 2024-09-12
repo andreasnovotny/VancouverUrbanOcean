@@ -1,0 +1,246 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+```{r}
+library(tidyverse)
+library(readxl)
+library(cowplot)
+
+library(paletteer)
+library(viridis)
+library(leaflet)
+
+source("Code/Functions.R")
+```
+Species Table all 2023:
+```{r}
+Species_table2023 <- read_csv("Data_import/Loic/12S_species_table.csv")
+```
+
+
+
+```{r}
+
+Metadata_Fjords <- read_csv("Data_import/Loic/01_Metadata_all.csv", 
+    col_types = cols(Year = col_number()))
+
+Metadata_UO <- read_excel("Data_import/Loic/VeDNA_UrbanOcean2023_sampledata.xlsx", 
+    col_types = c("text", "text", "text", 
+        "date", "text", "text", "numeric", 
+        "numeric", "numeric", "numeric", "text", 
+        "text", "text", "numeric", "date", 
+        "text", "text", "text", "numeric", 
+        "text", "text", "text", "text", "numeric", 
+        "text", "text", "text"))
+
+Metadata_UO
+
+
+OU <- Metadata_UO %>% 
+  select(Sample_ID, Event_ID, Type, Sample_Date, Station_ID, Location,
+         Line_out_depth, Bottom_depth, Latitude, Longitude)
+
+Fjords <- Metadata_Fjords %>% 
+  filter(Survey == "FJORDS_BIODIVERSITY") %>% 
+  transmute(Sample_ID = Hakai.ID,
+            Event_ID = "Fjords",
+            Type = "Fjords",
+            Sample_Date = Date,
+            Station_ID = Site_ID,
+            Location = Location.ID,
+            Line_out_depth = as.double(Depth),
+            Bottom_depth = CTD_depth,
+            Latitude = Lat,
+            Longitude = Long
+            )
+
+Metadata2023 <- bind_rows(OU, Fjords)
+```
+
+
+Merge Metadata and species table:
+```{r}
+sp <- Species_table2023 %>% 
+  select(!1) %>% 
+  pivot_longer(!1:2, names_to = "Sample_ID", values_to = "Abundance")
+
+All_12S_2023 <- Metadata2023 %>% 
+  left_join(sp, by = "Sample_ID")
+```
+
+
+
+```{r}
+surf <- All_12S_2023 %>% 
+  filter(Line_out_depth == 0) %>%
+  filter(Type != "FieldBlank") %>% 
+  mutate(Month = factor(month(Sample_Date)))
+surf
+
+
+tmp <- surf %>%
+    group_by(Sample_ID, Type, Month) %>% 
+    summarise(Library_Size = sum(Abundance)) %>% 
+    arrange(Library_Size)
+  
+tmp$Index <- seq(nrow(tmp))
+
+tmp %>% 
+  ggplot() +
+  geom_point(aes(Index, Library_Size,
+                 colour = Month,
+                 label = Sample_ID),
+             size = 0.5) +
+  theme_cowplot(12) +
+  theme(aspect.ratio = 1,
+        strip.background =element_blank()) +
+  geom_abline(intercept = 10000, linetype = 4)
+  ylim(c(0,10000))
+
+ggsave("Figure_output/Sequencing_Depth.pdf", width = 7, height = 4.5)
+
+Good_OU_12S <- All_12S_2023 %>% 
+  group_by(Sample_ID) %>%
+  filter(sum(Abundance)>10000) %>% 
+  ungroup() %>% 
+  
+  filter(Line_out_depth == 0) %>%
+  filter(Type != "FieldBlank") %>% 
+  filter(month(Sample_Date) != 1)
+
+```
+
+
+
+
+Calculate Indexed RAs
+```{r}
+Good_OU_12S
+```
+
+
+```{r}
+Indexed_UO_12S <- Good_OU_12S %>% 
+  index_RA(sample = Sample_ID,
+           taxa = scientificName,
+           abundance = Abundance,
+           Sample_Date, Station_ID, Location, Line_out_depth,
+           Bottom_depth, Latitude, Longitude, Type)
+
+Rank <- Indexed_UO_12S %>% 
+  group_by(scientificName) %>% 
+  summarise(RA = mean(RA)) %>% 
+  arrange(-RA) %>% 
+  filter(RA > 0.0005)
+
+Rank
+
+  
+
+```
+
+```{r}
+location_order <- c("Rivers",
+  "Bute",
+  "Toba",
+  "Howe_Sound",
+  "Outer Harbour",
+  "False Creek",
+  "Inner Harbour",
+  "Central Harbour",
+  "Port Moody Arm",
+  "Indian"
+  )
+
+mod_Indexed_UO_12S <- Indexed_UO_12S %>% 
+  mutate(
+    Season =
+      ifelse(month(Sample_Date) == 2, "Feb/Mar",
+             ifelse(month(Sample_Date) == 3, "Feb/Mar",
+                    ifelse(month(Sample_Date) == 5, "May",
+                           ifelse(month(Sample_Date) == 8, "Aug",
+                                  ifelse(month(Sample_Date) == 8, "Aug",
+                                         ifelse(month(Sample_Date) == 11, "Nov",
+                                                "else"))))))) %>% 
+  mutate(Location = factor(Location, levels = location_order))
+
+
+```
+
+
+
+Plot:
+```{r}
+
+mod_Indexed_UO_12S %>%
+  filter(scientificName %in% Rank$scientificName) %>% 
+  group_by(Location, Season, scientificName) %>% 
+  summarise(Mean = mean(RA_Index)) %>% 
+  ggplot() +
+  geom_bar(aes(Location, Mean, fill = Season), stat = "identity", position = "dodge") +
+  facet_wrap("scientificName") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+
+```{r}
+mod_Indexed_UO_12S %>% 
+  group_by(Location, Station_ID, Longitude, Latitude) %>% 
+  summarise() %>%
+  mutate(popup = paste(Location, Station_ID)) %>% 
+  leaflet() %>%
+  addTiles() %>% 
+  addProviderTiles(providers$Esri.WorldImagery) %>%
+  setView(-123.1, 49.30, zoom = 11) %>% 
+  addCircles(~Longitude, ~Latitude, popup = ~popup,
+             weight = 4, color = "red")
+
+
+mod_Indexed_UO_12S
+```
+
+```{r}
+mod_Indexed_UO_12S
+
+plotMat <- function(taxa, month) {
+  
+  m = mod_Indexed_UO_12S %>%
+    group_by(Location, Station_ID, Season, scientificName) %>%
+   summarise(RA_Index = mean(RA_Index),
+            RA = mean(RA),
+            Seq.abundance = sum(Abundance),
+            Longitude, Latitude) %>%
+  mutate(Month = Season) %>%
+  mutate(Popup = paste(Station_ID, "<br/>",
+                       "eDNA Index: ", round(RA_Index, digits = 3), "<br/>",
+                       "Relative Abundance: ", round(RA, digits = 3), "<br/>",
+                       "Number of sequences: ", Seq.abundance)) %>% 
+  
+  filter(scientificName == taxa,
+         Month == month) %>%
+  leaflet() %>%
+  addTiles() %>% 
+  addProviderTiles(providers$Esri.WorldImagery) %>%
+  setView(-123.1, 49.30, zoom = 11) %>% 
+  addCircles(~Longitude, ~Latitude, popup = ~Popup,
+             weight = ~RA_Index*75, color = "red")
+  return(m)
+
+}
+
+plotMat("Clupea pallasii", "Feb/Mar")
+plotMat("Clupea pallasii", "May")
+plotMat("Clupea pallasii", "Aug")
+plotMat("Clupea pallasii", "Nov")
+
+mod_Indexed_UO_12S %>%
+  pull(Season) %>% unique
+
+Rank
+
+```
+
+
+

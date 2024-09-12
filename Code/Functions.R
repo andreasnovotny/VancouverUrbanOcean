@@ -1,3 +1,75 @@
+#' Calculate and index Relative Abundances (eDNA Index).
+#'
+#' @description
+#' The following function will calculate relative abundance (RA) and the index
+#' of relative abundance (RA_Index) for any data set. The RA_Index is identical
+#' to eDNA Index, Double transformation, and Wisconsin transformation.
+#' This function will also handle extreme values to falls outside a given
+#' percentile. Extreme will otherwise have a big impact on the index,
+#' that is based on the population max.
+#' 
+#' @param data (Required) Tidy data object.
+#' @param sample (Required) Data variable with sample ID.
+#' @param taxa (Required) Data variable with taxa ID.
+#' @param abundance (Required) Data variable with sequence read counts (raw or rarefied).
+#' @param ... (Optional) Other sample data variables to be preserved.
+#' @param na.rep (Optional) Value to replace NA in abundance variable. Default: 0.
+#' @param extreme.perc (Optional) Value defining upper percentile for extreme values. Default: 0.99. If no adjustment wanted: 1.
+#' @value Same data class as input.
+#' 
+#' @example
+#' df_18S %>% index_RA(
+#'    sample = Library_ID,
+#'    taxa = Genus,
+#'    abundance = Abundance,
+#'    Depth, Date)
+
+index_RA <- function(data, sample, taxa, abundance, ...,
+                     na.rep = 0, extreme.perc = 0.99) {
+  
+  output <- data %>%
+    
+    # 1. Replace NA
+    mutate("{{abundance}}" := ifelse(is.na({{abundance}}),
+                                     na.rep,
+                                     {{abundance}})) %>% 
+    
+    # 2. Summaries abundance per sample and taxa
+    group_by({{sample}}, {{taxa}}, ...) %>% 
+    summarise("{{abundance}}" := sum({{abundance}})) %>% 
+    
+    # 3. Calculate relative abundance (RA) for each sample
+    group_by({{sample}}, ...) %>% 
+    reframe(RA = {{abundance}} / sum({{abundance}}),
+            {{taxa}}, {{abundance}}) %>%
+    filter(is.na(RA) == FALSE) %>% 
+    
+    # 4. Remove extreme values of relative abundance
+    # Extreme values are defined by percentile, and temporally assigned -1
+    group_by({{taxa}}) %>%
+    reframe(RA = ifelse(RA <= quantile(RA, extreme.perc), RA, -1),
+            {{sample}}, {{abundance}}, ...) %>%
+    # Extreme values (assigned -1) are reassigned to the new maximum value.
+    group_by({{taxa}}) %>%
+    reframe(RA = ifelse(RA == -1, max(RA), RA),
+            {{sample}}, {{abundance}}, ...) %>% 
+    
+    # 5. Calculate indexed relative abundance per taxa.
+    group_by({{taxa}}) %>%
+    reframe({{abundance}}, RA, RA_Index = RA/max(RA),
+            {{sample}}, ...) %>% 
+    filter(is.na(RA_Index) == FALSE) %>% 
+    
+    # 6. Arrange columns:
+    select({{sample}}, ..., {{taxa}}, {{abundance}}, RA, RA_Index)
+  
+}
+
+
+
+
+
+# OBS OLD!!
 #'eDNA Index calculator
 #'
 #' @description

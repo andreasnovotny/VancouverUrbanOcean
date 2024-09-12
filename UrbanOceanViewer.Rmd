@@ -27,73 +27,78 @@ source("Code/Functions.R")
 
 
 ```{r}
+# Sequencing data
 ASV_12S <- read_csv("Data_import/MiFish-U_species_table.csv")  %>% 
   filter(Group != "Total") %>%  select(!Total)
 
-samp_data_12S <- read_excel("Data_import/VeDNA_UrbanOcean2023_Metadata copy.xlsx", 
-    sheet = "12S_Library", col_types = c("text", 
-        "text", "date", "text", "text", "text", 
-        "text", "text", "text", "text", "text", 
+# Sample metadata
+VeDNA_UrbanOcean2023_sampledata <- read_excel("Data_import/VeDNA_UrbanOcean2023_sampledata.xlsx", 
+    col_types = c("text", "text", "text", 
+        "date", "text", "text", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "text", "text", "numeric", "numeric", 
+        "date", "text", "date", "numeric", 
+        "numeric", "text", "text", "text", 
         "text", "numeric", "text", "text", 
-        "numeric", "numeric", "numeric"))
+        "text"))
 
-station_data_12S <- read_excel("Data_import/VeDNA_UrbanOcean2023_Metadata copy.xlsx", sheet = "Stations")
+# Sequencing pool metadata
+Sequencing_Pool_12S_VeDNA2023 <- read_excel("Data_import/Sequencing_Pool_12S-VeDNA2023.xlsx", 
+    col_types = c("text", "text", "text", 
+        "text", "text", "text", "text", "text", 
+        "text", "numeric", "text", "numeric", 
+        "numeric", "numeric", "numeric")) %>% 
+  filter(Pool_ID == "12S-VeDNA2023")
 
-UO_12S <- ASV_12S %>% pivot_longer(!1:4, names_to = "Library_ID", values_to = "Abundance") %>% 
-  left_join(samp_data_12S, by = "Library_ID") %>% 
-  left_join(station_data_12S, by = "Station_ID")
+# Merge sample and library metadata
+Sample_Data_12S <- VeDNA_UrbanOcean2023_sampledata %>% 
+  right_join(Sequencing_Pool_12S_VeDNA2023, by = "Sample_ID") %>% 
+  select(Library_ID, 1:15, 18, Library_Concentration, Volume_added) %>% 
+  mutate(Type = ifelse(is.na(Type), "PCRBlank", Type))
+
+# Merge metadata with sequencing data
+OU_12S <- ASV_12S %>% 
+  pivot_longer(!1:4, names_to = "Library_ID", values_to = "Abundance") %>% 
+  left_join(Sample_Data_12S, by = "Library_ID") %>% 
+  filter(is.na(Type) == FALSE)
+
+Good_OU_12S <- OU_12S %>% 
+  group_by(Library_ID) %>%
+  filter(sum(Abundance)>10000) %>% 
+  ungroup()
+
+OU_12S_Index <- Good_OU_12S %>% 
+  index_RA(sample = Library_ID,
+           taxa = TaxonName,
+           abundance = Abundance,
+           Sample_Date, Station_ID, Location, Line_out_depth,
+           Bottom_depth, Latitude, Longitude)
 
 
+Rank <- OU_12S_Index %>% 
+  group_by(TaxonName) %>% 
+  summarise(RA = mean(RA)) %>% 
+  arrange(-RA) %>% 
+  filter(RA > 0.0005)
 
-valid_samples <- UO_12S %>% 
-  filter(is.na(Station_ID) == FALSE) %>% 
-  group_by(Library_ID) %>% 
-  reframe(Abundance = sum(Abundance)) %>%
-  filter(Abundance > 25000) %>% 
-  pull(Library_ID)
-
-
-UO_12S %>% 
-  filter(is.na(Station_ID) == FALSE) %>% 
-  group_by(Library_ID) %>% 
-  reframe(Abundance = sum(Abundance)) %>%
-  filter(Abundance > 25000) %>% 
-  pull(Library_ID) ->
-test
+OU_12S_Index <- OU_12S_Index %>% 
+  filter(TaxonName %in% Rank$TaxonName)
 
 
 common_names <- read_excel("Data_output/Common_names.xlsx")
 
 
-OU_12S_Index <- UO_12S %>%
-  mutate(Taxa = paste(Genus, Species, sep = " ")) %>% 
-  left_join(common_names, by = "Taxa") %>% 
-  filter(Library_ID %in% valid_samples,
-         Group != "zMultiple",
-         Fish == "Fish") %>% 
-  mutate(Taxa = Name,
-         Abundance = Abundance,
-         Depth = Depth,
-         Date = Sample_Date) %>% 
-  collapseRAindex(Library_ID, Location, Lat, Long, Station_ID)
-
-
 all_species <- OU_12S_Index %>% 
-  pull(Taxa) %>%  unique()
+  pull(TaxonName) %>%  unique()
 
 ```
 
 
-
-
-
-
-
-
-
-
 Explore Data
 =======================================================================
+```{r}
+OU_12S_Index
+```
 
 
 ```{r}
@@ -102,28 +107,36 @@ Explore Data
 plotMat <- function(taxa, month) {
   
   m = OU_12S_Index %>% 
-  group_by(Taxa, Date, Station_ID, Long, Lat) %>% 
+  group_by(TaxonName, Sample_Date, Station_ID, Latitude, Longitude) %>% 
   summarise(RA_Index = mean(RA_Index),
             RA = mean(RA),
             Seq.abundance = sum(Abundance)) %>%
-  mutate(Month = month(Date)) %>%
+  mutate(Month = month(Sample_Date)) %>%
   mutate(Popup = paste(Station_ID, "<br/>",
                        "eDNA Index: ", round(RA_Index, digits = 3), "<br/>",
                        "Relative Abundance: ", round(RA, digits = 3), "<br/>",
                        "Number of sequences: ", Seq.abundance)) %>% 
   
-  filter(Taxa == taxa,
+  filter(TaxonName == taxa,
          Month == month) %>% 
   leaflet() %>%
   addTiles() %>% 
   addProviderTiles(providers$Esri.WorldImagery) %>%
   setView(-123.1, 49.30, zoom = 11) %>% 
-  addCircles(~Long, ~Lat, popup = ~Popup,
+  addCircles(~Longitude, ~Latitude, popup = ~Popup,
              weight = ~RA_Index*75, color = "red")
   return(m)
 
 }
+
+
 ```
+
+
+
+
+
+
 
 Inputs {.sidebar}
 -----------------------------------------------------------------------

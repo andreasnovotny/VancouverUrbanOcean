@@ -1,0 +1,519 @@
+---
+title: "Vancouver Urban Ocean Biodiversity"
+output: 
+  flexdashboard::flex_dashboard:
+    social: menu
+    source_code: embed
+    orientation: columns
+    vertical_layout: fill
+    theme: simplex
+runtime: shiny
+editor_options: 
+  markdown: 
+    wrap: sentence
+---
+
+
+# Home {data-icon="fa-house"}
+
+## Inputs {.sidebar}
+\
+\
+\
+\
+\
+\
+![](Graphics/All_logos.png)
+
+## Column {.tabset}
+
+
+### About
+
+#### Welcome to the Vancouver Urban Ocean Biodiversity Project
+
+\
+
+In 2023 we started a new research direction to understand how urban environments interact with oceans, change their character, and impact their health. Our work is focusing on Vancouver as a study area. In this part of the project we discover how urbanization impacts marine biodiversity.
+
+- What is the organic matter and inorganic nutrient content of stormwater, urban rivers and other urban inputs to the coastal ocean?
+- What are the biogeochemical signatures of urban inputs to the nearshore ocean?
+- What is the footprint of urban material inputs in the coastal ocean?
+- What is the fate of urban material inputs in the coastal ocean?
+- How do urban material inputs affect the health of individual organisms and the food webs that they are a part of, and how does this impact the ecosystem services that they provide?
+- What is the effect of urbanization on marine biodiversity?
+
+More Information about the project can be found [here](https://pelagicecosystems.oceans.ubc.ca/research/microplastics-in-the-bc-coastal-ocean/). The project is a collaboration between the **University of British Columbia's Pelagic Ecosystems Lab** and **Tsleil-Waututh Nation**, and funded by **NSERC**.
+
+Here we present environmental DNA (eDNA) data from four surveys of the Burrard Inlet in 2023. See a methods description for more details. 
+
+For more information about the project, the dataset, or this application, please contact [**Brian Hunt**](mailto:b.hunt@oceans.ubc.ca){.email} or [**Andreas Novotny**](mailto:a.novotny@oceans.ubc.ca){.email}
+
+
+![](Graphics/Sunset.png)
+
+### Methods
+
+#### Fish Biodiversity from 12S eDNA analysis
+
+**Rationale**
+
+- This data set represents samples that was collected in **March, May, August, and November 2023**.
+- For each sampled station, **\~2L surface seawater was collected onto a 0.22 micrometer** filter, and preserved for DNA extraction.
+- For taxonomic classification of fish biodiversity, we amplified the **12S rRNA gene** using MiFish-U primers and sequenced the amplicons on Illumina MiSeq platform.
+- The sequences were cleaned up using **BARK pipeline**, and annotated to a custom-made database specific for the Pacific Northwest.
+
+**Detailed protocols** from sampling to final analysis can be found here:
+
+- [Sampling](https://dx.doi.org/10.17504/protocols.io.rm7vzjxrrlx1/v1)
+- [DNA Extraction](https://dx.doi.org/10.17504/protocols.io.bp2l6221kgqe/v1)
+- [12S Gene Sequencing](https://www.protocols.io/view/12s-rrna-gene-metabarcoding-library-prep-dual-pcr-dfqj3mun)
+- [BARK Bioinformatic Pipeline](https://github.com/enormandeau/barque)
+- [Analysis and Vizualization](https://github.com/andreasnovotny/VancouverUrbanOcean)
+
+
+# Explore Map {data-icon="fa-map"}
+
+
+```{r}
+
+### SERVER: DATA PREPARATIONS AND FUNCTIONS ##### 
+
+# Specify libraries
+library(plotly)
+library(ggpubr)
+library(paletteer)
+library(viridis)
+library(cowplot)
+library(leaflet)
+library(readxl)
+library(tidyverse)
+library(vegan)
+source("Code/Functions.R")
+
+
+### 1. READ IN DATA  #####
+
+# Sequence data all
+Species_table2023 <- read_csv("Data_import/Loic/12S_species_table.csv")
+
+# Metadata from the urban oceans project
+Metadata_UO <- read_excel("Data_import/Loic/VeDNA_UrbanOcean2023_sampledata.xlsx", 
+    col_types = c("text", "text", "text", 
+        "date", "text", "text", "numeric", 
+        "numeric", "numeric", "numeric", "text", 
+        "text", "text", "numeric", "date", 
+        "text", "text", "text", "numeric", 
+        "text", "text", "text", "text", "numeric", 
+        "text", "text", "text")) %>% 
+  select(Sample_ID, Event_ID, Type, Sample_Date, Station_ID, Location,
+         Line_out_depth, Bottom_depth, Latitude, Longitude)
+
+# Metadata from the Fjords project
+Metadata_Fjords <- read_csv("Data_import/Loic/01_Metadata_all.csv", 
+  col_types = cols(Year = col_number())) %>% 
+  filter(Survey == "FJORDS_BIODIVERSITY") %>% 
+  transmute(Sample_ID = Hakai.ID,
+            Event_ID = "Fjords",
+            Type = "Fjords",
+            Sample_Date = Date,
+            Station_ID = Site_ID,
+            Location = Location.ID,
+            Line_out_depth = as.double(Depth),
+            Bottom_depth = CTD_depth,
+            Latitude = Lat,
+            Longitude = Long
+            )
+# Merge the two metadata sets
+Metadata2023 <- bind_rows(Metadata_UO, Metadata_Fjords)
+
+# Merge metadata with sequence data
+sp <- Species_table2023 %>% 
+  select(!1) %>% 
+  pivot_longer(!1:2, names_to = "Sample_ID", values_to = "Abundance")
+
+All_12S_2023 <- Metadata2023 %>% 
+  left_join(sp, by = "Sample_ID")
+
+
+#### 2. DATA MODIFICATIONS ######
+
+# Remove samples with low counts
+Good_OU_12S <- All_12S_2023 %>% 
+  group_by(Sample_ID) %>%
+  filter(sum(Abundance)>10000) %>% 
+  ungroup() %>% 
+  
+  filter(Line_out_depth == 0) %>%
+  filter(Type != "FieldBlank") %>% 
+  filter(month(Sample_Date) != 1)
+
+
+# Calculate eDNA index for all samples and species
+Indexed_UO_12S <- Good_OU_12S %>% 
+  index_RA(sample = Sample_ID,
+           taxa = scientificName,
+           abundance = Abundance,
+           Sample_Date, Station_ID, Location, Line_out_depth,
+           Bottom_depth, Latitude, Longitude, Type)
+
+
+# Rank species based on their mean relative sequence abundance, and filter low occuring species
+Rank <- Indexed_UO_12S %>% 
+  group_by(scientificName) %>% 
+  summarise(RA = mean(RA)) %>% 
+  arrange(-RA) %>% 
+  filter(RA > 0.0005)
+
+Indexed_UO_12S <- Indexed_UO_12S %>% 
+  filter(scientificName %in% Rank$scientificName)
+
+# Read in a scientific to common name translation
+common_names <- read_excel("Data_output/Common_names.xlsx")
+
+# Specify an order of sampling locations:
+location_order <- c(
+  "Rivers",
+  "Bute",
+  "Toba",
+  "Howe_Sound",
+  "Outer Harbour",
+  "False Creek",
+  "Inner Harbour",
+  "Central Harbour",
+  "Port Moody Arm",
+  "Indian"
+  )
+
+location_names <- c(
+  "Rivers Inlet",
+  "Bute Inlet",
+  "Toba Inlet",
+  "Howe Sound",
+  "Outer Harbour",
+  "False Creek",
+  "Inner Harbour",
+  "Central Harbour",
+  "Port Moody Arm",
+  "Indian Arm"
+  )
+
+# Make four sampling season categories
+Indexed_UO_12S <- Indexed_UO_12S %>% 
+  mutate(
+    Month =
+      ifelse(month(Sample_Date) == 2, "Feb/Mar",
+             ifelse(month(Sample_Date) == 3, "Feb/Mar",
+                    ifelse(month(Sample_Date) == 5, "May",
+                           ifelse(month(Sample_Date) == 8, "Aug",
+                                  ifelse(month(Sample_Date) == 8, "Aug",
+                                         ifelse(month(Sample_Date) == 11, "Nov",
+                                                "else"))))))) %>% 
+  mutate(Location = factor(Location, levels = location_order, labels = location_names))
+
+
+
+Indexed_UO_12S <- Indexed_UO_12S %>% 
+  mutate(Taxa = scientificName) %>% 
+  left_join(common_names, by = "Taxa") %>% 
+  filter(Fish == "Fish")
+
+
+
+
+
+
+
+
+# Make list of unique Species names
+all_species <- Indexed_UO_12S %>% 
+  pull(Name) %>%  unique()
+
+
+### PLOTTING FUNCTIONS ###
+
+# 1. Map function
+plotMat <- function(taxa, month, location) {
+  
+  mapplot = Indexed_UO_12S %>%
+    group_by(Location, Station_ID, Month, Name) %>%
+   summarise(RA_Index = mean(RA_Index),
+            RA = mean(RA),
+            Seq.abundance = sum(Abundance),
+            Longitude, Latitude) %>%
+  mutate(Popup = paste(Station_ID, "<br/>",
+                       "eDNA Index: ", round(RA_Index, digits = 3), "<br/>",
+                       "Relative Abundance: ", round(RA, digits = 3), "<br/>",
+                       "Number of sequences: ", Seq.abundance)) %>% 
+  
+  filter(Name == taxa,
+         Month == month) %>%
+  leaflet() %>%
+  addTiles() %>% 
+  addProviderTiles(providers$Esri.WorldImagery) %>%
+  #setView(-123.1, 49.30, zoom = 11) %>% 
+  addCircles(~Longitude, ~Latitude, popup = ~Popup,
+             weight = ~RA_Index*75, color = "red")
+  
+
+  if (location == "Vancouver") {
+    m <- mapplot %>%
+      setView(-123.1, 49.30, zoom = 11)
+    }
+  if (location == "Lower Mainland") {
+    m <- mapplot %>%
+      setView(-123.1, 49.45, zoom = 9)
+    }
+  if (location == "British Columbia") {
+    m <- mapplot %>%
+      setView(-125.1, 49.90, zoom = 6)
+  }
+  
+  return(m)
+
+}
+
+
+
+
+
+### END OF SERVER SCRIPT ####
+```
+
+## Inputs {.sidebar}
+
+##### Select Species
+
+Showing eDNA-index species distributions for:
+
+```{r}
+selectInput(
+  "Filt_Taxa",
+  NULL,
+  choices = all_species,
+  selected = "Salmon, Chum"
+)
+```
+
+
+```{r}
+radioButtons(
+  "location",
+  "Auto Zoom",
+  choices = c("Vancouver", "Lower Mainland", "British Columbia"),
+  selected = "Vancouver"
+)
+```
+
+**Please Consider:**
+
+Red circles represent eDNA-index, normalized relative abundance. This can be used to infer differences in proportion between sites and seasons, but it does not say anything about the absolute biomass.
+
+The more observations of one species (number of red circles), the more reliable is the data.
+
+![](Graphics/logos.png)
+
+
+## Column
+
+### February/March
+
+```{r}
+
+renderLeaflet({
+  plotMat(input$Filt_Taxa, "Feb/Mar", input$location)
+})
+
+```
+
+### May
+
+```{r}
+
+renderLeaflet({
+  plotMat(input$Filt_Taxa, "May", input$location)
+})
+```
+
+## Column
+
+### August
+
+```{r}
+
+renderLeaflet({
+  plotMat(input$Filt_Taxa, "Aug", input$location)
+})
+```
+
+### November
+
+```{r}
+
+renderLeaflet({
+  plotMat(input$Filt_Taxa, "Nov", input$location)
+})
+```
+
+
+
+
+
+
+
+
+
+# Community analysis {data-icon="fa-signal"}
+
+## Inputs {.sidebar}
+
+```{r}
+Months <- Indexed_UO_12S %>% 
+pull(Month) %>% unique
+
+Locations <- Indexed_UO_12S %>% 
+pull(Location) %>% unique
+
+
+checkboxGroupInput(
+  "Month",
+  "Select Month",
+  Months,
+  selected = Months
+)
+
+checkboxGroupInput(
+  "Location",
+  "Select Location",
+  Locations,
+  selected = Locations[6:10]
+)
+
+submitButton()
+```
+
+
+
+![](Graphics/logos.png)
+
+## Column
+
+### NMDS
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+plotNMDS <- function(month, location) {
+  
+# Finter and Make Wide data format
+wide <- Indexed_UO_12S %>%
+  filter(Month %in% month,
+         Location %in% location) %>% 
+  select(Sample_ID, Month, Location, RA, Name) %>%
+  pivot_wider(names_from = Name, values_from = RA)
+
+# Extract Matrix
+mat <- wide %>%
+    select(!2:3) %>% 
+    column_to_rownames("Sample_ID") %>% 
+    as.matrix()
+
+# Run NMDS
+mod <- metaMDS(mat, trymax = 100, trace = FALSE)
+
+# Extract Scores back to matrix
+Sample_scores <-
+    scores(mod)$sites %>% 
+    as.data.frame() %>%
+    rownames_to_column("Sample_ID") %>% 
+    left_join(select(wide, 1:3), by = "Sample_ID")
+
+Sample_scores %>% 
+  ggplot() +
+  geom_point(aes(NMDS1, NMDS2,
+                 colour = Location,
+                 shape = Month),
+             size = 3) +
+  theme_minimal_grid(12) +
+  theme(aspect.ratio = 1,
+        panel.border = element_rect(colour = "black", fill=NA))
+
+}
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+renderPlot({
+  plotNMDS(input$Month, input$Location)
+})
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Overview {data-icon="fa-binoculars"}
+
+## Inputs {.sidebar}
+
+
+```{r}
+selectInput(
+  "Filt_Taxa2",
+  NULL,
+  choices = all_species,
+  selected = "Salmon, Chum"
+)
+```
+
+
+![](Graphics/logos.png)
+
+
+## Column {.tabset}
+
+### All Species, All Sites
+
+```{r}
+renderPlotly({
+Indexed_UO_12S %>%
+  filter(scientificName %in% Rank$scientificName) %>%
+  group_by(Location, Month, Name) %>% 
+  summarise(Mean = mean(RA_Index)) %>% 
+  ggplot() +
+  geom_bar(aes(Location, Mean, fill = Month), stat = "identity", position = "dodge") +
+  facet_wrap("Name") +
+  theme_minimal_grid(8) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+})
+```
+
+### One Species
+
+
+```{r}
+
+renderPlotly({
+Indexed_UO_12S %>%
+  filter(Name == input$Filt_Taxa2) %>% 
+  filter(scientificName %in% Rank$scientificName) %>%
+  group_by(Location, Month, Name) %>% 
+  summarise(Mean = mean(RA_Index)) %>% 
+  ggplot() +
+  geom_bar(aes(Location, Mean, fill = Month), stat = "identity", position = "dodge") +
+  facet_wrap("Name") +
+  theme_minimal_grid(10) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+  })
+
+
+
+```
+
+
