@@ -1,5 +1,5 @@
 ---
-title: "Vancouver Urban Ocean eDNA"
+title: "Vancouver Urban Ocean Biodiversity"
 output: 
   flexdashboard::flex_dashboard:
     social: menu
@@ -8,11 +8,80 @@ output:
     vertical_layout: fill
     theme: simplex
 runtime: shiny
+editor_options: 
+  markdown: 
+    wrap: sentence
 ---
+
+
+# Home {data-icon="fa-house"}
+
+## Inputs {.sidebar}
+\
+\
+\
+\
+\
+\
+![](Graphics/All_logos.png)
+
+## Column {.tabset}
+
+
+### About
+
+#### Welcome to the Vancouver Urban Ocean Biodiversity Project
+
+\
+
+In 2023 we started a new research direction to understand how urban environments interact with oceans, change their character, and impact their health. Our work is focusing on Vancouver as a study area. In this part of the project we discover how urbanization impacts marine biodiversity.
+
+- What is the organic matter and inorganic nutrient content of stormwater, urban rivers and other urban inputs to the coastal ocean?
+- What are the biogeochemical signatures of urban inputs to the nearshore ocean?
+- What is the footprint of urban material inputs in the coastal ocean?
+- What is the fate of urban material inputs in the coastal ocean?
+- How do urban material inputs affect the health of individual organisms and the food webs that they are a part of, and how does this impact the ecosystem services that they provide?
+- What is the effect of urbanization on marine biodiversity?
+
+More Information about the project can be found [here](https://pelagicecosystems.oceans.ubc.ca/research/microplastics-in-the-bc-coastal-ocean/). The project is a collaboration between the **University of British Columbia's Pelagic Ecosystems Lab** and **Tsleil-Waututh Nation**, and funded by **NSERC**.
+
+Here we present environmental DNA (eDNA) data from four surveys of the Burrard Inlet in 2023. See a methods description for more details. 
+
+For more information about the project, the dataset, or this application, please contact [**Brian Hunt**](mailto:b.hunt@oceans.ubc.ca){.email} or [**Andreas Novotny**](mailto:a.novotny@oceans.ubc.ca){.email}
+
+
+![](Graphics/Sunset.png)
+
+### Methods
+
+#### Fish Biodiversity from 12S eDNA analysis
+
+**Rationale**
+
+- This data set represents samples that was collected in **March, May, August, and November 2023**.
+- For each sampled station, **\~2L surface seawater was collected onto a 0.22 micrometer** filter, and preserved for DNA extraction.
+- For taxonomic classification of fish biodiversity, we amplified the **12S rRNA gene** using MiFish-U primers and sequenced the amplicons on Illumina MiSeq platform.
+- The sequences were cleaned up using **BARK pipeline**, and annotated to a custom-made database specific for the Pacific Northwest.
+
+**Detailed protocols** from sampling to final analysis can be found here:
+
+- [Sampling](https://dx.doi.org/10.17504/protocols.io.rm7vzjxrrlx1/v1)
+- [DNA Extraction](https://dx.doi.org/10.17504/protocols.io.bp2l6221kgqe/v1)
+- [12S Gene Sequencing](https://www.protocols.io/view/12s-rrna-gene-metabarcoding-library-prep-dual-pcr-dfqj3mun)
+- [BARK Bioinformatic Pipeline](https://github.com/enormandeau/barque)
+- [Analysis and Vizualization](https://github.com/andreasnovotny/VancouverUrbanOcean)
+
+#### Interpreting the eDNA index
+
+
+# Explore Map {data-icon="fa-map"}
+
 
 ```{r}
 
-# Specific plotting tools
+### SERVER: DATA PREPARATIONS AND FUNCTIONS ##### 
+
+# Specify libraries
 library(plotly)
 library(ggpubr)
 library(paletteer)
@@ -21,299 +90,302 @@ library(cowplot)
 library(leaflet)
 library(readxl)
 library(tidyverse)
+library(vegan)
+library(broom)
+library(betareg)
+library(car)
 source("Code/Functions.R")
-```
 
 
+### 1. READ IN DATA  #####
 
-```{r}
-# Sequencing data
-ASV_12S <- read_csv("Data_import/MiFish-U_species_table.csv")  %>% 
-  filter(Group != "Total") %>%  select(!Total)
+# Sequence data all
+Species_table2023 <- read_csv("Data_import/Loic/12S_species_table.csv")
 
-# Sample metadata
-VeDNA_UrbanOcean2023_sampledata <- read_excel("Data_import/VeDNA_UrbanOcean2023_sampledata.xlsx", 
+# Metadata from the urban oceans project
+Metadata_UO <- read_excel("Data_import/Loic/VeDNA_UrbanOcean2023_sampledata.xlsx", 
     col_types = c("text", "text", "text", 
         "date", "text", "text", "numeric", 
-        "numeric", "numeric", "numeric", 
-        "text", "text", "numeric", "numeric", 
-        "date", "text", "date", "numeric", 
-        "numeric", "text", "text", "text", 
-        "text", "numeric", "text", "text", 
-        "text"))
+        "numeric", "numeric", "numeric", "text", 
+        "text", "text", "numeric", "date", 
+        "text", "text", "text", "numeric", 
+        "text", "text", "text", "text", "numeric", 
+        "text", "text", "text")) %>% 
+  select(Sample_ID, Event_ID, Type, Sample_Date, Station_ID, Location,
+         Line_out_depth, Bottom_depth, Latitude, Longitude)
 
-# Sequencing pool metadata
-Sequencing_Pool_12S_VeDNA2023 <- read_excel("Data_import/Sequencing_Pool_12S-VeDNA2023.xlsx", 
-    col_types = c("text", "text", "text", 
-        "text", "text", "text", "text", "text", 
-        "text", "numeric", "text", "numeric", 
-        "numeric", "numeric", "numeric")) %>% 
-  filter(Pool_ID == "12S-VeDNA2023")
+# Metadata from the Fjords project
+Metadata_Fjords <- read_csv("Data_import/Loic/01_Metadata_all.csv", 
+  col_types = cols(Year = col_number())) %>% 
+  filter(Survey == "FJORDS_BIODIVERSITY") %>% 
+  transmute(Sample_ID = Hakai.ID,
+            Event_ID = "Fjords",
+            Type = "Fjords",
+            Sample_Date = Date,
+            Station_ID = Site_ID,
+            Location = Location.ID,
+            Line_out_depth = as.double(Depth),
+            Bottom_depth = CTD_depth,
+            Latitude = Lat,
+            Longitude = Long
+            )
+# Merge the two metadata sets
+Metadata2023 <- bind_rows(Metadata_UO, Metadata_Fjords)
 
-# Merge sample and library metadata
-Sample_Data_12S <- VeDNA_UrbanOcean2023_sampledata %>% 
-  right_join(Sequencing_Pool_12S_VeDNA2023, by = "Sample_ID") %>% 
-  select(Library_ID, 1:15, 18, Library_Concentration, Volume_added) %>% 
-  mutate(Type = ifelse(is.na(Type), "PCRBlank", Type))
+# Merge metadata with sequence data
+sp <- Species_table2023 %>% 
+  select(!1) %>% 
+  pivot_longer(!1:2, names_to = "Sample_ID", values_to = "Abundance")
 
-# Merge metadata with sequencing data
-OU_12S <- ASV_12S %>% 
-  pivot_longer(!1:4, names_to = "Library_ID", values_to = "Abundance") %>% 
-  left_join(Sample_Data_12S, by = "Library_ID") %>% 
-  filter(is.na(Type) == FALSE)
+All_12S_2023 <- Metadata2023 %>% 
+  left_join(sp, by = "Sample_ID") %>% 
+  
+  filter(Location %in% c(
+  "Outer Harbour",
+  "False Creek",
+  "Inner Harbour",
+  "Central Harbour",
+  "Port Moody Arm",
+  "Indian"
+  ))
 
-Good_OU_12S <- OU_12S %>% 
-  group_by(Library_ID) %>%
+
+#### 2. DATA MODIFICATIONS ######
+
+# Remove samples with low counts
+Good_OU_12S <- All_12S_2023 %>% 
+  group_by(Sample_ID) %>%
   filter(sum(Abundance)>10000) %>% 
-  ungroup()
+  ungroup() %>% 
+  
+  filter(Line_out_depth == 0) %>%
+  filter(Type != "FieldBlank") %>% 
+  filter(month(Sample_Date) != 1)
 
-OU_12S_Index <- Good_OU_12S %>% 
-  index_RA(sample = Library_ID,
-           taxa = TaxonName,
+
+# Calculate eDNA index for all samples and species
+Indexed_UO_12S <- Good_OU_12S %>% 
+  index_RA(sample = Sample_ID,
+           taxa = scientificName,
            abundance = Abundance,
            Sample_Date, Station_ID, Location, Line_out_depth,
-           Bottom_depth, Latitude, Longitude)
+           Bottom_depth, Latitude, Longitude, Type)
 
 
-Rank <- OU_12S_Index %>% 
-  group_by(TaxonName) %>% 
+# Rank species based on their mean relative sequence abundance, and filter low occuring species
+Rank <- Indexed_UO_12S %>% 
+  group_by(scientificName) %>% 
   summarise(RA = mean(RA)) %>% 
   arrange(-RA) %>% 
   filter(RA > 0.0005)
 
-OU_12S_Index <- OU_12S_Index %>% 
-  filter(TaxonName %in% Rank$TaxonName)
+Indexed_UO_12S <- Indexed_UO_12S %>% 
+  filter(scientificName %in% Rank$scientificName)
 
-
+# Read in a scientific to common name translation
 common_names <- read_excel("Data_output/Common_names.xlsx")
 
+# Specify an order of sampling locations:
+location_order <- c(
+  "Rivers",
+  "Bute",
+  "Toba",
+  "Howe_Sound",
+  "Outer Harbour",
+  "False Creek",
+  "Inner Harbour",
+  "Central Harbour",
+  "Port Moody Arm",
+  "Indian"
+  )
 
-all_species <- OU_12S_Index %>% 
-  pull(TaxonName) %>%  unique()
+location_names <- c(
+  "Rivers Inlet",
+  "Bute Inlet",
+  "Toba Inlet",
+  "Howe Sound",
+  "Outer Harbour",
+  "False Creek",
+  "Inner Harbour",
+  "Central Harbour",
+  "Port Moody Arm",
+  "Indian Arm"
+  )
 
-```
+# Make four sampling season categories
+Indexed_UO_12S <- Indexed_UO_12S %>% 
+  mutate(
+    Month =
+      ifelse(month(Sample_Date) == 2, "Feb/Mar",
+             ifelse(month(Sample_Date) == 3, "Feb/Mar",
+                    ifelse(month(Sample_Date) == 5, "May",
+                           ifelse(month(Sample_Date) == 8, "Aug",
+                                  ifelse(month(Sample_Date) == 8, "Aug",
+                                         ifelse(month(Sample_Date) == 11, "Nov",
+                                                "else"))))))) %>% 
+  mutate(Location = factor(Location, levels = location_order, labels = location_names))
 
 
-Explore Data
-=======================================================================
-```{r}
-OU_12S_Index
-```
+
+Indexed_UO_12S <- Indexed_UO_12S %>% 
+  mutate(Taxa = scientificName) %>% 
+  left_join(common_names, by = "Taxa") %>% 
+  filter(Fish == "Fish")
 
 
-```{r}
+
+
+
+
+
+
+# Make list of unique Species names
+all_species <- Indexed_UO_12S %>% 
+  pull(Name) %>%  unique()
+
+
+### PLOTTING FUNCTIONS ###
 
 # 1. Map function
-plotMat <- function(taxa, month) {
+plotMat <- function(taxa, month, location) {
   
-  m = OU_12S_Index %>% 
-  group_by(TaxonName, Sample_Date, Station_ID, Latitude, Longitude) %>% 
-  summarise(RA_Index = mean(RA_Index),
+  mapplot = Indexed_UO_12S %>%
+    group_by(Location, Station_ID, Month, Name) %>%
+   summarise(RA_Index = mean(RA_Index),
             RA = mean(RA),
-            Seq.abundance = sum(Abundance)) %>%
-  mutate(Month = month(Sample_Date)) %>%
+            Seq.abundance = sum(Abundance),
+            Longitude, Latitude) %>%
   mutate(Popup = paste(Station_ID, "<br/>",
                        "eDNA Index: ", round(RA_Index, digits = 3), "<br/>",
                        "Relative Abundance: ", round(RA, digits = 3), "<br/>",
                        "Number of sequences: ", Seq.abundance)) %>% 
   
-  filter(TaxonName == taxa,
-         Month == month) %>% 
+  filter(Name == taxa,
+         Month == month) %>%
   leaflet() %>%
   addTiles() %>% 
   addProviderTiles(providers$Esri.WorldImagery) %>%
-  setView(-123.1, 49.30, zoom = 11) %>% 
+  #setView(-123.1, 49.30, zoom = 11) %>% 
   addCircles(~Longitude, ~Latitude, popup = ~Popup,
              weight = ~RA_Index*75, color = "red")
+  
+
+
+    m <- mapplot %>%
+      setView(-123.1, 49.35, zoom = 10)
+
   return(m)
 
 }
 
 
+
+### END OF SERVER SCRIPT ####
 ```
 
-
-
-
-
-
-
-Inputs {.sidebar}
------------------------------------------------------------------------
+## Inputs {.sidebar}
 
 ##### Select Species
+
+Showing eDNA-index species distributions for:
 
 ```{r}
 selectInput(
   "Filt_Taxa",
   NULL,
-  choices = all_species,
+  choices = sort(all_species),
   selected = "Salmon, Chum"
 )
 ```
 
 
-**Please consider:**
+**Please Consider:**
 
-- This app is still being developed, and the data has not been verified.
-- Red circles represent eDNA index, normalized relative abundance. This can be used to infer differences in proportion between sites and seasons, but it does not say anything about the absolute biomass.
-- Also species with extremely low biomass will appear with at least one big red circle.
-- The more observations of one species (number of red circles), the more reliable is the data.
+Red circles represent eDNA-index, normalized relative abundance. This can be used to infer differences in proportion between sites and seasons, but it does not say anything about the absolute biomass.
 
+The more observations of one species (number of red circles), the more reliable is the data.
 
-
-
-##### About
-
-Built buy **Andreas Novotny**
-
-**Contact:** a.novotny@oceans.ubc.ca
+![](Graphics/logos.png)
 
 
-Column
------------------------------------------------------------------------
+## Column
 
-### March 
-```{r}
-
-renderLeaflet({
-  plotMat(input$Filt_Taxa, 3)
-})
-```
-
-
-### May 
+### February/March
 
 ```{r}
 
 renderLeaflet({
-  plotMat(input$Filt_Taxa, 5)
+  plotMat(input$Filt_Taxa, "Feb/Mar", input$location)
 })
+
 ```
 
-
-Column
------------------------------------------------------------------------
-
-### August 
-```{r}
-
-renderLeaflet({
-  plotMat(input$Filt_Taxa, 8)
-})
-```
-
-
-### November 
+### May
 
 ```{r}
 
 renderLeaflet({
-  plotMat(input$Filt_Taxa, 11)
+  plotMat(input$Filt_Taxa, "May", input$location)
 })
 ```
 
-Community analysis
-=======================================================================
+## Column
 
-Inputs {.sidebar}
------------------------------------------------------------------------
-
-
-**Relative eDNA Abundance** of taxa identified with 12S eDNA. It is likely that taxa with higher relative abundance are also more abundant in the ecosystem, however this relationship is very week, and are biased by several methodological aspects.
-
-However, higher relative abundance generally means that the data is more reliable.
-
-
-Column
------------------------------------------------------------------------
+### August
 
 ```{r}
 
+renderLeaflet({
+  plotMat(input$Filt_Taxa, "Aug", input$location)
+})
+```
+
+### November
+
+```{r}
+
+renderLeaflet({
+  plotMat(input$Filt_Taxa, "Nov", input$location)
+})
 ```
 
 
 
-##### About
+# Station Info {data-icon="fa-location-pin"}
 
-Built buy **Andreas Novotny**
+## Inputs {.sidebar}
 
-**Contact:** a.novotny@oceans.ubc.ca
-
-Diagnostic
-=======================================================================
-
-Inputs {.sidebar}
------------------------------------------------------------------------
+This map shows all sampled stations. Hower over the markers to see more information.
 
 
-**Relative eDNA Abundance** of taxa identified with 12S eDNA. It is likely that taxa with higher relative abundance are also more abundant in the ecosystem, however this relationship is very week, and are biased by several methodological aspects.
 
-However, higher relative abundance generally means that the data is more reliable.
-
-
-##### About
-
-Built buy **Andreas Novotny**
-
-**Contact:** a.novotny@oceans.ubc.ca
+![](Graphics/logos.png)
 
 
 
 
-
-
-
-
-Column {.tabset}
--------------------------------------
-### Relative abundance
-
-
-
-```{r}
-OU_12S_Index %>%
-  filter(Abundance > 0) %>%
-  group_by(Taxa) %>% 
-  mutate(maxRA = median(RA)) %>%
-  ungroup() %>% 
-  mutate(Taxa = fct_reorder(Taxa, -maxRA)) %>% 
-  ggplot() +
-  geom_boxplot(aes(Taxa, RA)) +
-  theme_minimal_hgrid(font_size = 10) +
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1,
-                                   face = "italic"),
-        panel.background = element_rect(fill = '#F5F5F5', colour = 'darkgrey')) +
-  scale_y_continuous(trans='log10')
-```
-
-
-
+## Column
 
 ### All stations
 
 
 ```{r}
-OU_12S_Index %>% 
-  group_by(Date, Station_ID, Long, Lat) %>% 
-  summarise() %>%
-  leaflet() %>%
+
+
+Indexed_UO_12S %>% 
+  group_by(Station_ID, Location, Longitude, Latitude) %>% 
+  summarize() %>% 
+  mutate(Popup = paste("Station ID: ", Station_ID, "<br/>",
+                       "Location: ", Location, "<br/>",
+                       "Longitude", Longitude,  "<br/>",
+                       "Latitude", Latitude)) %>%
+  leaflet(options = leafletOptions()) %>%
   addTiles() %>% 
   addProviderTiles(providers$Esri.WorldImagery) %>%
-  setView(-123.1, 49.30, zoom = 11) %>% 
-  addMarkers(~Long, ~Lat, label = ~Station_ID)
+  setView(-123.1, 49.35, zoom = 11) %>% 
+  addCircles(~Longitude, ~Latitude, popup = ~Popup,
+            weight = 10, color = "red") 
+  
+  
 ```
 
-
-
-About
-=======================================================================
-
-Samples collected during March-November 2023, by the **University of British Columbia** in collaboration with **Tsleil-Waututh First Nation**.
-
-Each sample represents ~2L of filtered water. 12S amplified using MiFish-U, sequenced on Illumina MiSeq, and assigned towards a custom database. 
-
-
-Built buy **Andreas Novotny**
-
-**Contact:** a.novotny@oceans.ubc.ca

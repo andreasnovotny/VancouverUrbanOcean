@@ -71,6 +71,8 @@ For more information about the project, the dataset, or this application, please
 - [BARK Bioinformatic Pipeline](https://github.com/enormandeau/barque)
 - [Analysis and Vizualization](https://github.com/andreasnovotny/VancouverUrbanOcean)
 
+#### Interpreting the eDNA index
+
 
 # Explore Map {data-icon="fa-map"}
 
@@ -89,6 +91,8 @@ library(leaflet)
 library(readxl)
 library(tidyverse)
 library(vegan)
+library(broom)
+library(car)
 source("Code/Functions.R")
 
 
@@ -290,7 +294,7 @@ Showing eDNA-index species distributions for:
 selectInput(
   "Filt_Taxa",
   NULL,
-  choices = all_species,
+  choices = sort(all_species),
   selected = "Salmon, Chum"
 )
 ```
@@ -359,11 +363,95 @@ renderLeaflet({
 
 
 
+# Species Distributions {data-icon="fa-fish"}
+
+## Inputs {.sidebar}
+
+
+##### Select Species
+
+Showing eDNA-index species distributions for:
+
+
+```{r}
+selectInput(
+  "Filt_Taxa2",
+  NULL,
+  choices = sort(all_species),
+  selected = "Salmon, Chum"
+)
+```
+
+
+![](Graphics/logos.png)
+
+
+## Column
+
+### Species
+
+```{r}
+
+renderPlot({
+  Indexed_UO_12S %>%
+    filter(Name == input$Filt_Taxa2) %>% 
+    filter(scientificName %in% Rank$scientificName) %>%
+    #group_by(Location, Month, Name) %>%
+    #summarise(Mean = mean(RA_Index)) %>% 
+    
+    mutate(Month = factor(Month, levels = c(
+      "Feb/Mar",
+      "May",
+      "Aug",
+      "Nov"
+    ))) %>% 
+      
+    ggplot() +
+    geom_boxplot(aes(Month, RA_Index, fill = Month), position = "dodge") +
+    facet_wrap("Location", nrow = 1) +
+    theme_cowplot(14) +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+    scale_fill_manual(values = c("#3288BD", "#A6D96A", "#F46D43", "#40004B"))
+  
+
+  })
+```
+
+
+### Stats
+
+This is a linear model (two-way ANOVA ) showing the effect of month and general location on the eDNA-index. This is intended to give a rough estimate of whether the observed patterns are statistically significant or not. If a p.value is lower than 0.1, it is not likely that the observed effect is due to chance or low data, and may be considered significant. The model does not correct for multiple testing of specie or nonnormal sample distribution.
+
+
+```{r}
+
+renderDataTable({
+  dat <- Indexed_UO_12S %>%
+    filter(Name == input$Filt_Taxa2) %>% 
+    filter(scientificName %in% Rank$scientificName) %>%
+    filter(is.na(RA_Index) == FALSE ) %>% 
+    
+    mutate(Month = factor(Month, levels = c(
+      "Feb/Mar",
+      "May",
+      "Aug",
+      "Nov"
+    )))
+  
+  glm(RA_Index ~ Month * Location, data = dat) %>% 
+    Anova() %>% tidy()
+
+  })
 
 
 
 
-# Community analysis {data-icon="fa-signal"}
+```
+
+
+
+
+# Community Analysis {data-icon="fa-signal"}
 
 ## Inputs {.sidebar}
 
@@ -373,6 +461,7 @@ pull(Month) %>% unique
 
 Locations <- Indexed_UO_12S %>% 
 pull(Location) %>% unique
+
 
 
 checkboxGroupInput(
@@ -389,26 +478,42 @@ checkboxGroupInput(
   selected = Locations[6:10]
 )
 
-submitButton()
+selectInput(
+  "norm",
+  "Select Normalization",
+  choices = c("eDNA-index", "Relative Abundance"),
+  selected = "eDNA-index"
+)
+
+
 ```
 
 
 
 ![](Graphics/logos.png)
 
-## Column
+## Column 
 
-### NMDS
+### NMDS Plot
 
 ```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
-plotNMDS <- function(month, location) {
+plotNMDS <- function(month, location, norm) {
+
+  # Finter and Make Wide data format
   
-# Finter and Make Wide data format
-wide <- Indexed_UO_12S %>%
-  filter(Month %in% month,
-         Location %in% location) %>% 
-  select(Sample_ID, Month, Location, RA, Name) %>%
-  pivot_wider(names_from = Name, values_from = RA)
+  if (norm == "eDNA-index") {
+    wide <- Indexed_UO_12S %>%
+      filter(Month %in% month,
+             Location %in% location) %>%
+      select(Sample_ID, Month, Location, RA_Index, Name) %>%
+      pivot_wider(names_from = Name, values_from = RA_Index)
+  } else {
+    wide <- Indexed_UO_12S %>%
+      filter(Month %in% month,
+             Location %in% location) %>%
+      select(Sample_ID, Month, Location, RA, Name) %>%
+      pivot_wider(names_from = Name, values_from = RA)
+  }
 
 # Extract Matrix
 mat <- wide %>%
@@ -437,12 +542,52 @@ Sample_scores %>%
         panel.border = element_rect(colour = "black", fill=NA))
 
 }
+
+printPERMANOVA <- function(month, location, norm) {
+
+  if (norm == "eDNA-index") {
+    wide <- Indexed_UO_12S %>%
+      filter(Month %in% month,
+             Location %in% location) %>%
+      select(Sample_ID, Month, Location, RA_Index, Name) %>%
+      pivot_wider(names_from = Name, values_from = RA_Index)
+  } else {
+    wide <- Indexed_UO_12S %>%
+      filter(Month %in% month,
+             Location %in% location) %>%
+      select(Sample_ID, Month, Location, RA, Name) %>%
+      pivot_wider(names_from = Name, values_from = RA)
+  }
+
+# Extract Matrix
+mat <- wide %>%
+    select(!2:3) %>% 
+    column_to_rownames("Sample_ID") %>% 
+    as.matrix()
+
+
+adonis2(mat ~ Month+Location,
+                       data = wide,
+                       permutations = 999, method="bray") %>% 
+  tidy()
+}
+
+
 ```
 
 
 ```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
 renderPlot({
-  plotNMDS(input$Month, input$Location)
+  plotNMDS(input$Month, input$Location, input$norm)
+})
+```
+
+
+### PERMANOVA Stats
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+renderDataTable({
+  printPERMANOVA(input$Month, input$Location, input$norm)
 })
 ```
 
@@ -456,64 +601,40 @@ renderPlot({
 
 
 
-
-
-# Overview {data-icon="fa-binoculars"}
+# Station Info {data-icon="fa-location-pin"}
 
 ## Inputs {.sidebar}
 
+This map shows all sampled stations. Hower over the markers to see more information.
 
-```{r}
-selectInput(
-  "Filt_Taxa2",
-  NULL,
-  choices = all_species,
-  selected = "Salmon, Chum"
-)
-```
 
 
 ![](Graphics/logos.png)
 
 
-## Column {.tabset}
 
-### All Species, All Sites
 
-```{r}
-renderPlotly({
-Indexed_UO_12S %>%
-  filter(scientificName %in% Rank$scientificName) %>%
-  group_by(Location, Month, Name) %>% 
-  summarise(Mean = mean(RA_Index)) %>% 
-  ggplot() +
-  geom_bar(aes(Location, Mean, fill = Month), stat = "identity", position = "dodge") +
-  facet_wrap("Name") +
-  theme_minimal_grid(8) +
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
-})
-```
+## Column
 
-### One Species
+### All stations
 
 
 ```{r}
-
-renderPlotly({
-Indexed_UO_12S %>%
-  filter(Name == input$Filt_Taxa2) %>% 
-  filter(scientificName %in% Rank$scientificName) %>%
-  group_by(Location, Month, Name) %>% 
-  summarise(Mean = mean(RA_Index)) %>% 
-  ggplot() +
-  geom_bar(aes(Location, Mean, fill = Month), stat = "identity", position = "dodge") +
-  facet_wrap("Name") +
-  theme_minimal_grid(10) +
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
-  })
-
-
-
+Indexed_UO_12S %>% 
+  group_by(Station_ID, Location, Longitude, Latitude) %>% 
+  summarize() %>% 
+  mutate(Popup = paste("Station ID: ", Station_ID, "<br/>",
+                       "Location: ", Location, "<br/>",
+                       "Longitude", Longitude,  "<br/>",
+                       "Latitude", Latitude)) %>%
+  leaflet() %>%
+  addTiles() %>% 
+  addProviderTiles(providers$Esri.WorldImagery) %>%
+  setView(-123.1, 49.30, zoom = 11) %>% 
+  addCircles(~Longitude, ~Latitude, popup = ~Popup,
+            weight = 10, color = "red") 
+  
 ```
+
 
 
