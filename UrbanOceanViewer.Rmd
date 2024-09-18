@@ -58,20 +58,34 @@ For more information about the project, the dataset, or this application, please
 
 **Rationale**
 
-- This data set represents samples that was collected in **March, May, August, and November 2023**.
+- This data set represents samples collected in **March (February for Indian Arm), May, August, and November 2023**.
 - For each sampled station, **\~2L surface seawater was collected onto a 0.22 micrometer** filter, and preserved for DNA extraction.
 - For taxonomic classification of fish biodiversity, we amplified the **12S rRNA gene** using MiFish-U primers and sequenced the amplicons on Illumina MiSeq platform.
 - The sequences were cleaned up using **BARK pipeline**, and annotated to a custom-made database specific for the Pacific Northwest.
 
 **Detailed protocols** from sampling to final analysis can be found here:
 
-- [Sampling](https://dx.doi.org/10.17504/protocols.io.rm7vzjxrrlx1/v1)
-- [DNA Extraction](https://dx.doi.org/10.17504/protocols.io.bp2l6221kgqe/v1)
-- [12S Gene Sequencing](https://www.protocols.io/view/12s-rrna-gene-metabarcoding-library-prep-dual-pcr-dfqj3mun)
+- [Sampling Protocol](https://dx.doi.org/10.17504/protocols.io.rm7vzjxrrlx1/v1)
+- [DNA Extraction Protocol](https://dx.doi.org/10.17504/protocols.io.bp2l6221kgqe/v1)
+- [12S Gene Sequencing Protocol](https://www.protocols.io/view/12s-rrna-gene-metabarcoding-library-prep-dual-pcr-dfqj3mun)
 - [BARK Bioinformatic Pipeline](https://github.com/enormandeau/barque)
-- [Analysis and Vizualization](https://github.com/andreasnovotny/VancouverUrbanOcean)
+- [Analysis and Vizualization Code](https://github.com/andreasnovotny/VancouverUrbanOcean)
+\
 
-#### Interpreting the eDNA index
+#### Interpreting the data
+
+In the eDNA analysis, we meassure primarily DNA that is present in the water originating from the mucus, shedded cell fragments, excretion etc. How well these DNA concentrations are related to fish biomass depends on many factors, such as organism size, structure of epidermis and mucus and time that the DNA has been in the water. Generally, the more DNA in the water, the higher abundance or biomass of fish.
+
+**Sequence abundance:** is the number of gene sequences from one species tedected in one sample. This number has little biological implications as the method introduces a random error that is specific for each sample. However, high sequence abundance means that the sample detection is more reliable.
+
+![](Graphics/RA.png)
+
+**Relative abundance:** The relative abundance (RA) of each taxon (i) in each sample (j) is the proportion of sequence abundance (Y) in each sample (j). A relative abundance of 0.5 for one species means that 50 % of the DNA sequences in that sample comes from that species. While a high relative abundance generally indicates a high proportion of biomass, there are species specific errors that cause some species to get overrepresented while others are underrepresented.
+
+![](Graphics/index.png)
+
+**eDNA-index:** is the indexed relative abundances, where the relative abundance of each taxon in a sample is scaled from 0-1 across all samples, based on the highest value. An eDNA-index of 1 will indicate the sample in which the species had the highest relative abundance. eDNA-indices can not be be compared between species.
+
 
 
 # Explore Map {data-icon="fa-map"}
@@ -281,7 +295,16 @@ plotMat <- function(taxa, month, location) {
 
 
 ### END OF SERVER SCRIPT ####
+
+
+
+
 ```
+
+
+
+
+
 
 ## Inputs {.sidebar}
 
@@ -301,6 +324,29 @@ selectInput(
 
 **Please Consider:**
 
+```{r}
+renderText({
+  EngName <- common_names %>% filter(Name == input$Filt_Taxa) %>% pull(Name_1)
+  
+  SciName <- common_names %>% filter(Name == input$Filt_Taxa) %>% pull(Taxa)
+  
+  count <- Indexed_UO_12S %>% 
+    filter(Name == input$Filt_Taxa,
+         Abundance > 0) %>%
+    group_by() %>% summarise(Count = n()) %>% pull(Count)
+  
+  sequences <- Indexed_UO_12S %>% 
+    filter(Name == input$Filt_Taxa) %>% 
+    group_by() %>% summarise(Abundance = mean(RA)) %>%  pull(Abundance)
+  
+  paste(EngName, " (", SciName, ") was detected in ", count,
+        " out of 104 samples and accounted on average for ", 
+        round(sequences*100, digits = 1),
+        " % of relative DNA sequence abundance.", sep = "")
+})
+```
+
+\
 Red circles represent eDNA-index, normalized relative abundance. This can be used to infer differences in proportion between sites and seasons, but it does not say anything about the absolute biomass.
 
 The more observations of one species (number of red circles), the more reliable is the data.
@@ -308,7 +354,10 @@ The more observations of one species (number of red circles), the more reliable 
 ![](Graphics/logos.png)
 
 
+
+
 ## Column
+
 
 ### February/March
 
@@ -330,6 +379,8 @@ renderLeaflet({
 ```
 
 ## Column
+
+
 
 ### August
 
