@@ -1,6 +1,6 @@
 ---
 title: "Vancouver Urban Ocean Biodiversity"
-output: 
+output:
   flexdashboard::flex_dashboard:
     social: menu
     source_code: embed
@@ -8,9 +8,11 @@ output:
     vertical_layout: fill
     theme: simplex
 runtime: shiny
-editor_options: 
-  markdown: 
+editor_options:
+  markdown:
     wrap: sentence
+resource_files:
+- Graphics/logos.png
 ---
 
 
@@ -47,7 +49,7 @@ More Information about the project can be found [here](https://pelagicecosystems
 
 Here we present environmental DNA (eDNA) data from four surveys of the Burrard Inlet in 2023. See a methods description for more details. 
 
-For more information about the project, the dataset, or this application, please contact [**Brian Hunt**](mailto:b.hunt@oceans.ubc.ca){.email} or [**Andreas Novotny**](mailto:a.novotny@oceans.ubc.ca){.email}
+For more information about the project, the dataset, or this application, please contact [**Brian Hunt**](mailto:b.hunt@oceans.ubc.ca){.email},  [**Andreas Novotny**](mailto:a.novotny@oceans.ubc.ca){.email} or [**Loïc Jacquemot**](mailto:l.jacquemot@oceans.ubc.ca){.email}
 
 
 ![](Graphics/Sunset.png)
