@@ -144,7 +144,7 @@ Rank <- Indexed_UO_12S %>%
   group_by(scientificName) %>% 
   summarise(RA = mean(RA)) %>% 
   arrange(-RA) %>% 
-  filter(RA > 0.0005)
+  filter(RA > 0.0000)
 
 Indexed_UO_12S <- Indexed_UO_12S %>% 
   filter(scientificName %in% Rank$scientificName)

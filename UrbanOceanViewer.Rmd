@@ -193,7 +193,7 @@ Rank <- Indexed_UO_12S %>%
   group_by(scientificName) %>% 
   summarise(RA = mean(RA)) %>% 
   arrange(-RA) %>% 
-  filter(RA > 0.0005)
+  filter(RA > 0.0000)
 
 Indexed_UO_12S <- Indexed_UO_12S %>% 
   filter(scientificName %in% Rank$scientificName)
@@ -247,12 +247,6 @@ Indexed_UO_12S <- Indexed_UO_12S %>%
   mutate(Taxa = scientificName) %>% 
   left_join(common_names, by = "Taxa") %>% 
   filter(Fish == "Fish")
-
-
-
-
-
-
 
 
 # Make list of unique Species names
@@ -323,6 +317,18 @@ selectInput(
 )
 ```
 
+```{r}
+renderText({
+  sequences <- Indexed_UO_12S %>% 
+    filter(Name == input$Filt_Taxa) %>% 
+    group_by() %>% summarise(Abundance = mean(RA)) %>%  pull(Abundance)
+  
+  if (sequences*100 < 0.01) {
+    paste("WARNING: Sparse data - interpret with care!")
+  }
+
+})
+```
 
 **Please Consider:**
 
@@ -343,10 +349,13 @@ renderText({
   
   paste(EngName, " (", SciName, ") was detected in ", count,
         " out of 104 samples and accounted on average for ", 
-        round(sequences*100, digits = 1),
+        ifelse(sequences*100 < 0.01, "LESS THAN 0.01", round(sequences*100, digits = 2)),
         " % of relative DNA sequence abundance.", sep = "")
 })
 ```
+
+
+
 
 \
 Red circles represent eDNA-index, normalized relative abundance. This can be used to infer differences in proportion between sites and seasons, but it does not say anything about the absolute biomass.
