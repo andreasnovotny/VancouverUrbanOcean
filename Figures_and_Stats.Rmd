@@ -1,58 +1,7 @@
 ---
-title: "INTERNAL Urban Ocean - Fjords Biodiversity"
-output: 
-  flexdashboard::flex_dashboard:
-    social: menu
-    source_code: embed
-    orientation: columns
-    vertical_layout: fill
-    theme: simplex
-runtime: shiny
-editor_options: 
-  markdown: 
-    wrap: sentence
+title: "R Notebook"
+output: html_notebook
 ---
-
-
-# Home {data-icon="fa-house"}
-
-## Inputs {.sidebar}
-\
-\
-\
-\
-\
-\
-![](Graphics/All_logos.png)
-
-## Column
-
-
-### Methods
-
-#### Fish Biodiversity from 12S eDNA analysis
-
-**Rationale**
-
-- This data set represents samples that was collected in **March, May, August, and November 2023**.
-- For each sampled station, **\~2L surface seawater was collected onto a 0.22 micrometer** filter, and preserved for DNA extraction.
-- For taxonomic classification of fish biodiversity, we amplified the **12S rRNA gene** using MiFish-U primers and sequenced the amplicons on Illumina MiSeq platform.
-- The sequences were cleaned up using **BARK pipeline**, and annotated to a custom-made database specific for the Pacific Northwest.
-
-**Detailed protocols** from sampling to final analysis can be found here:
-
-- [Sampling](https://dx.doi.org/10.17504/protocols.io.rm7vzjxrrlx1/v1)
-- [DNA Extraction](https://dx.doi.org/10.17504/protocols.io.bp2l6221kgqe/v1)
-- [12S Gene Sequencing](https://www.protocols.io/view/12s-rrna-gene-metabarcoding-library-prep-dual-pcr-dfqj3mun)
-- [BARK Bioinformatic Pipeline](https://github.com/enormandeau/barque)
-- [Analysis and Vizualization](https://github.com/andreasnovotny/VancouverUrbanOcean)
-
-
-For more information about the project, the dataset, or this application, please contact [**Brian Hunt**](mailto:b.hunt@oceans.ubc.ca){.email} or [**Andreas Novotny**](mailto:a.novotny@oceans.ubc.ca){.email}
-
-
-# Explore Map {data-icon="fa-map"}
-
 
 ```{r}
 
@@ -70,6 +19,7 @@ library(tidyverse)
 library(vegan)
 library(broom)
 library(car)
+library(indicspecies)
 source("Code/Functions.R")
 
 
@@ -261,220 +211,9 @@ plotMat <- function(taxa, month, location) {
 ### END OF SERVER SCRIPT ####
 ```
 
-## Inputs {.sidebar}
-
-##### Select Species
-
-Showing eDNA-index species distributions for:
-
-```{r}
-selectInput(
-  "Filt_Taxa",
-  NULL,
-  choices = sort(all_species),
-  selected = "Salmon, Chum"
-)
-```
 
 
 ```{r}
-radioButtons(
-  "location",
-  "Auto Zoom",
-  choices = c("Vancouver", "Lower Mainland", "British Columbia"),
-  selected = "Vancouver"
-)
-```
-
-**Please Consider:**
-
-Red circles represent eDNA-index, normalized relative abundance. This can be used to infer differences in proportion between sites and seasons, but it does not say anything about the absolute biomass.
-
-The more observations of one species (number of red circles), the more reliable is the data.
-
-![](Graphics/logos.png)
-
-
-## Column
-
-### February/March
-
-```{r}
-
-renderLeaflet({
-  plotMat(input$Filt_Taxa, "Feb/Mar", input$location)
-})
-
-```
-
-### May
-
-```{r}
-
-renderLeaflet({
-  plotMat(input$Filt_Taxa, "May", input$location)
-})
-```
-
-## Column
-
-### August
-
-```{r}
-
-renderLeaflet({
-  plotMat(input$Filt_Taxa, "Aug", input$location)
-})
-```
-
-### November
-
-```{r}
-
-renderLeaflet({
-  plotMat(input$Filt_Taxa, "Nov", input$location)
-})
-```
-
-
-
-
-
-# Species Distributions {data-icon="fa-fish"}
-
-## Inputs {.sidebar}
-
-
-##### Select Species
-
-Showing eDNA-index species distributions for:
-
-
-```{r}
-selectInput(
-  "Filt_Taxa2",
-  NULL,
-  choices = sort(all_species),
-  selected = "Salmon, Chum"
-)
-```
-
-
-![](Graphics/logos.png)
-
-
-## Column
-
-### Species
-
-```{r}
-
-renderPlot({
-  Indexed_UO_12S %>%
-    filter(Name == input$Filt_Taxa2) %>% 
-    filter(scientificName %in% Rank$scientificName) %>%
-    #group_by(Location, Month, Name) %>%
-    #summarise(Mean = mean(RA_Index)) %>% 
-    
-    mutate(Month = factor(Month, levels = c(
-      "Feb/Mar",
-      "May",
-      "Aug",
-      "Nov"
-    ))) %>% 
-      
-    ggplot() +
-    geom_boxplot(aes(Month, RA_Index, fill = Month), position = "dodge") +
-    facet_wrap("Location", nrow = 1) +
-    theme_cowplot(14) +
-    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
-    scale_fill_manual(values = c("#3288BD", "#A6D96A", "#F46D43", "#40004B"))
-  
-
-  })
-```
-
-
-### Stats
-
-This is a linear model (two-way ANOVA ) showing the effect of month and general location on the eDNA-index. This is intended to give a rough estimate of whether the observed patterns are statistically significant or not. If a p.value is lower than 0.1, it is not likely that the observed effect is due to chance or low data, and may be considered significant. The model does not correct for multiple testing of specie or nonnormal sample distribution.
-
-
-```{r}
-
-renderDataTable({
-  dat <- Indexed_UO_12S %>%
-    filter(Name == input$Filt_Taxa2) %>% 
-    filter(scientificName %in% Rank$scientificName) %>%
-    filter(is.na(RA_Index) == FALSE ) %>% 
-    
-    mutate(Month = factor(Month, levels = c(
-      "Feb/Mar",
-      "May",
-      "Aug",
-      "Nov"
-    )))
-  
-  glm(RA_Index ~ Month * Location, data = dat) %>% 
-    Anova() %>% tidy()
-
-  })
-
-
-
-
-```
-
-
-
-
-# Community Analysis {data-icon="fa-signal"}
-
-## Inputs {.sidebar}
-
-```{r}
-Months <- Indexed_UO_12S %>% 
-pull(Month) %>% unique
-
-Locations <- Indexed_UO_12S %>% 
-pull(Location) %>% unique
-
-
-
-checkboxGroupInput(
-  "Month",
-  "Select Month",
-  Months,
-  selected = Months
-)
-
-checkboxGroupInput(
-  "Location",
-  "Select Location",
-  Locations,
-  selected = Locations[6:10]
-)
-
-selectInput(
-  "norm",
-  "Select Normalization",
-  choices = c("eDNA-index", "Relative Abundance"),
-  selected = "eDNA-index"
-)
-
-
-```
-
-
-
-![](Graphics/logos.png)
-
-## Column 
-
-### NMDS Plot
-
-```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
-
 Location_color <- c(
   "Rivers Inlet" ='#c7eae5',
   "Bute Inlet" = '#80cdc1',
@@ -502,8 +241,12 @@ Fjords <- c(
   "Howe Sound",
   "Indian Arm"
 )
+```
 
 
+
+
+```{r}
 
 plotNMDS <- function(month, location, norm) {
 
@@ -533,7 +276,6 @@ mat <- wide %>%
 
 # Run NMDS
 mod <- metaMDS(mat, trymax = 100, trace = FALSE)
-mod
 
 # NEW
 Species_scores <- 
@@ -542,14 +284,13 @@ Species_scores <-
   rownames_to_column("Species")
 
 # SIMPER
-simper_result <- simper(mat) %>% 
+simper_result <- simper(mat, group = wide$Environment) %>% 
   summary()
 
-simper_result
+Simper_tab <- simper_resul[1] %>%
+  rownames_to_column("Species")
 
-# Extract the species contributing most to the clustering.
-Top_Species <- simper_result$total %>% 
-  rownames_to_column("Species") %>% 
+Top_Species <- Simper_tab %>% 
   filter(average > 0.01) %>% 
   pull(Species)
   
@@ -562,7 +303,7 @@ Sample_scores <-
     left_join(select(wide, 1:4), by = "Sample_ID")
 
 
-Sample_scores %>% 
+NMDS_plot <- Sample_scores %>% 
   ggplot() +
   geom_point(mapping = aes(NMDS1, NMDS2, colour = Location),
              size = 3) +
@@ -574,8 +315,30 @@ Sample_scores %>%
         panel.border = element_rect(colour = "black", fill=NA)) +
   scale_color_manual(values = Location_color)
 
+
+Permanova_tab <- adonis2(mat ~ Location+Month,
+                       data = wide,
+                       permutations = 999, method="bray") %>% 
+  tidy()
+
+list(NMDS_plot,
+     Permanova_tab,
+     Simper_tab,
+     Sample_scores,
+     Species_scores,
+     Data = wide)
+
 }
 
+
+
+
+
+```
+
+
+
+```{r}
 
 printPERMANOVA <- function(month, location, norm) {
 
@@ -600,75 +363,151 @@ mat <- wide %>%
     as.matrix()
 
 
-adonis2(mat ~ Month+Location,
+adonis2(mat ~ Location,
                        data = wide,
                        permutations = 999, method="bray") %>% 
   tidy()
 }
-
-
-```
-
-
-```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
-renderPlot({
-  plotNMDS(input$Month, input$Location, input$norm)
-})
-```
-
-
-### PERMANOVA Stats
-
-```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
-renderDataTable({
-  printPERMANOVA(input$Month, input$Location, input$norm)
-})
 ```
 
 
 
-
-
-
-
-
-
-
-
-# Station Info {data-icon="fa-location-pin"}
-
-## Inputs {.sidebar}
-
-This map shows all sampled stations. Hower over the markers to see more information.
-
-
-
-![](Graphics/logos.png)
-
-
-
-
-## Column
-
-### All stations
 
 
 ```{r}
-Indexed_UO_12S %>% 
-  group_by(Station_ID, Location, Longitude, Latitude) %>% 
-  summarize() %>% 
-  mutate(Popup = paste("Station ID: ", Station_ID, "<br/>",
-                       "Location: ", Location, "<br/>",
-                       "Longitude", Longitude,  "<br/>",
-                       "Latitude", Latitude)) %>%
-  leaflet() %>%
-  addTiles() %>% 
-  addProviderTiles(providers$Esri.WorldImagery) %>%
-  setView(-123.1, 49.30, zoom = 11) %>% 
-  addCircles(~Longitude, ~Latitude, popup = ~Popup,
-            weight = 10, color = "red") 
+plotNMDS <- function(month, location, norm) {
+
+  tmp <- Indexed_UO_12S %>% 
+    mutate(Environment = ifelse(Location %in% Fjords, "Fjords", "Urban"))
+
+
+  if (norm == "eDNA-index") {
+    wide <- tmp %>%
+      filter(Month %in% month,
+             Location %in% location) %>%
+      select(Sample_ID, Month, Location, Environment, RA_Index, Name) %>%
+      pivot_wider(names_from = Name, values_from = RA_Index)
+  } else {
+    wide <- tmp %>%
+      filter(Month %in% month,
+             Location %in% location) %>%
+      select(Sample_ID, Month, Location, Environment, RA, Name) %>%
+      pivot_wider(names_from = Name, values_from = RA)
+  }
+
+# Extract Matrix
+mat <- wide %>%
+    select(!2:4) %>% 
+    column_to_rownames("Sample_ID") %>% 
+    as.matrix()
+
+# Run NMDS
+mod <- metaMDS(mat, trymax = 100, trace = FALSE)
+
+# NEW
+Species_scores <- 
+  scores(mod)$species %>% 
+  as.data.frame() %>%
+  rownames_to_column("Species")
+
+# SIMPER
+simper_result <- simper(mat, group = wide$Environment) %>% 
+  summary()
+
+Simper_tab <- simper_resul[1] %>%
+  rownames_to_column("Species")
+
+Top_Species <- Simper_tab %>% 
+  filter(average > 0.01) %>% 
+  pull(Species)
   
+
+# Extract Scores back to matrix
+Sample_scores <-
+    scores(mod)$sites %>% 
+    as.data.frame() %>%
+    rownames_to_column("Sample_ID") %>% 
+    left_join(select(wide, 1:4), by = "Sample_ID")
+
+
+NMDS_plot <- Sample_scores %>% 
+  ggplot() +
+  geom_point(mapping = aes(NMDS1, NMDS2, colour = Location),
+             size = 3) +
+  stat_ellipse(aes(NMDS1, NMDS2, linetype = Environment), level = 0.95) +
+  geom_text(data = filter(Species_scores, Species %in% Top_Species),
+            mapping = aes(NMDS1, NMDS2, label = Species)) +
+  theme_minimal_grid(12) +
+  theme(aspect.ratio = 1,
+        panel.border = element_rect(colour = "black", fill=NA)) +
+  scale_color_manual(values = Location_color)
+
+
+Permanova_tab <- adonis2(mat ~ Location+Month,
+                       data = wide,
+                       permutations = 999, method="bray") %>% 
+  tidy()
+
+list(NMDS_plot,
+     Permanova_tab,
+     Simper_tab,
+     Sample_scores,
+     Species_scores,
+     Data = wide)
+
+}
+
 ```
 
 
+
+```{r}
+All <- plotNMDS(Months, Locations, "eDNA-index")
+
+Months
+```
+
+
+```{r}
+
+
+
+All
+
+Feb <- plotNMDS("Feb/Mar", Locations, "Relative Abundance")
+May <- plotNMDS("May", Locations, "Relative Abundance")
+Aug <- plotNMDS("Aug", Locations, "Relative Abundance")
+Nov <- plotNMDS("Nov", Locations, "Relative Abundance")
+
+ggarrange(Feb, May, Aug, Nov, labels = "AUTO", common.legend = TRUE)
+
+
+Feb <- plotNMDS("Feb/Mar", Locations, "eDNA-index")
+May <- plotNMDS("May", Locations, "eDNA-index")
+Aug <- plotNMDS("Aug", Locations, "eDNA-index")
+Nov <- plotNMDS("Nov", Locations, "eDNA-index")
+
+
+ggarrange(Feb, May, Aug, Nov, labels = "AUTO", common.legend = TRUE)
+
+Feb
+
+
+
+all <- plotNMDS(Months, Locations, "eDNA-index")
+
+
+mat <- all$Data %>% 
+    select(!2:4) %>% 
+    column_to_rownames("Sample_ID") %>% 
+    as.matrix()
+
+ind_mod <- multipatt(mat, all$Data$Environment, func = "IndVal.g")
+summary(ind_mod)
+ind_mod
+
+
+
+
+```
 

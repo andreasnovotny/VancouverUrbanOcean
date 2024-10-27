@@ -5,14 +5,4 @@ output: html_notebook
 
 
 
-```{r}
-count <- Indexed_UO_12S %>% 
-  filter(Name == "Salmon, Chum",
-         Abundance > 0) %>% 
-  group_by() %>% summarise(Count = n()) %>% pull(Count)
-
-sequences <- Indexed_UO_12S %>% 
-  filter(Name == "Salmon, Chum") %>% 
-  group_by() %>% summarise(Abundance = sum(Abundance)) %>%  pull(Abundance)
-```
 
