@@ -22,6 +22,7 @@ library(broom)
 library(car)
 library(indicspecies)
 library(ggdendro)
+library(lme4)
 source("Code/Functions.R")
 
 
@@ -458,6 +459,18 @@ plot_hclust <- function(NMDS_list) {
 All <- model_NMDS(Months, Locations, "eDNA-index") %>% 
   model_simper()
 
+All$Species_scores %>% 
+  filter(p < 0.05) %>% 
+  arrange(desc(average))
+  
+
+
+ind_mod <- multipatt(All$Matrix, All$Data$Environment, func = "IndVal.g")
+summary(ind_mod)
+```
+
+
+```{r}
 # NMDS
 plot_NMDS(All, min.sp.cont = 0.05, max.p = 0.05)
 
@@ -465,7 +478,7 @@ plot_NMDS(All, min.sp.cont = 0.05, max.p = 0.05)
 # Permanova
 perm_all <- adonis2(All$Matrix ~ Location * Month,
             data = All$Data,
-            permutations = 999, method="bray") %>% 
+            permutations = 999, method="bray") %>%
   tidy()
 perm_all
 
@@ -480,6 +493,9 @@ permutest(dispersion)
 # Indicator species analysis
 ind_mod <- multipatt(All$Matrix, All$Data$Environment, func = "IndVal.g")
 summary(ind_mod)
+
+All <- model_NMDS(Months, Locations, "eDNA-index")
+All$Species_scores
 ```
 
 ### Feb 
@@ -577,8 +593,116 @@ plot_hclust(Nov)
 ```
 
 
+## Urban Ocean only
 
 ```{r}
+UO <- model_NMDS(Months, Urban, "Relative Abundance")
+
+Alpha_diversity <-
+  tibble(Sample_ID = rownames(UO$Matrix),
+         Richness = specnumber(UO$Matrix),
+         Shannon_Index = diversity(UO$Matrix, index = "shannon"),
+         Simpson_Index = diversity(UO$Matrix, index = "simpson"),
+         Evenness = diversity(UO$Matrix, index = "shannon") / log(specnumber(UO$Matrix))
+       
+       ) %>% 
+  left_join(select(UO$Data, 1:5)) %>% 
+  mutate(Month = factor(Month, levels = Months))
+
+Alpha_diversity %>% 
+  pivot_longer(2:5, names_to = "Diversity_Index") %>% 
+  ggplot() +
+  geom_boxplot(aes(Location, value, colour = Month)) +
+  facet_wrap(~ Diversity_Index, scales = "free") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+
+mod <- lm(Shannon_Index ~ Month * Location, data = Alpha_diversity)
+summary(mod)
+Anova(mod)
+
+
+mod <- lm(Simpson_Index ~ Month * Location, data = Alpha_diversity)
+summary(mod)
+Anova(mod)
+
+mod <- lm(Richness ~ Month * Location, data = Alpha_diversity)
+summary(mod)
+Anova(mod)
+
+
+mod <- lm(Evenness ~ Month * Location, data = Alpha_diversity)
+summary(mod)
+Anova(mod)
+
+Alpha_diversity
+```
+```{r}
+UO <- model_NMDS("Aug", Urban, "R")
+ind_mod <- multipatt(UO$Matrix, UO$Data$Location, func = "IndVal.g")
+summary(ind_mod)
+```
+
+
+
+```{r}
+simper_result <- simper(UO$Matrix) %>%
+    summary()
+  
+  simper_result
+  
+  Simper_tab <-
+    simper_result$total %>%
+    rownames_to_column("Species")
+  
+  UO$Species_scores <- 
+    NMDS_list$Species_scores %>%
+    left_join(Simper_tab)
+  
+UO
+
+
+plot_hclust(UO)
+
+NMDS_list$Sample_scores
+```
+
+
+```{r}
+
+UO <- model_NMDS(Months, Urban, "eDNA-index")
+  ggplot() +
+    geom_text(data = UO$Sample_scores,
+              mapping = aes(NMDS1, NMDS2,
+                            label = Station_ID,
+                            color = Location))
+
+
+```
+
+
+```{r}
+geom_point(data = NMDS_list$Sample_scores,
+               mapping = aes(NMDS1, NMDS2, colour = Month,
+                             shape = Location),
+               size = 2)
+    
+    stat_ellipse(data = NMDS_list$Sample_scores,
+                 aes(NMDS1, NMDS2, linetype = Environment), level = 0.95) +
+    
+    ggnewscale::new_scale_color() +
+    scale_color_manual(values = Significant_color) +
+    
+    geom_text(data = filter(NMDS_list$Species_scores,
+                            average > min.sp.cont | p <= max.p),
+              mapping = aes(NMDS1, NMDS2, label = Species,
+                            size = average, color = Significant)) +
+    
+    
+    theme_minimal_grid(12) +
+    theme(aspect.ratio = 1,
+          panel.border = element_rect(colour = "black", fill=NA)) 
+}
 
 
 
@@ -586,7 +710,7 @@ plot_hclust(Nov)
 
 
 
-## Urban Ocean only
+
 
 
 
@@ -595,56 +719,75 @@ plot_hclust(Nov)
 
 # Alpha diversity analysis
 
-## Data rarefaction:
-
-
-```{r}
-WIDE <- Indexed_UO_12S %>%
-  select(Sample_ID, Sample_Date, Station_ID, Location, Line_out_depth, Month, Type, Name_1, Abundance) %>% 
-  pivot_wider(names_from = Name_1, values_from = Abundance, values_fill = 0)
-WIDE  
-
-MAT <- WIDE %>%
-  column_to_rownames("Sample_ID") %>% 
-  select(!1:6)
-
-set.seed(123)  # Set seed for reproducibility
-data_rarefied <- rrarefy(MAT, sample = 20000)
-
-data_rarefied
-
-
-```
-
+## All months
 
 ```{r}
+All <- model_NMDS(Months, Locations, "Relative Abundance")
+
 Alpha_diversity <-
-  tibble(Sample_ID = rownames(data_rarefied),
-         Richness = specnumber(data_rarefied),
-         Shannon_Index = diversity(data_rarefied, index = "shannon"),
-         Simpson_Index = diversity(data_rarefied, index = "simpson"),
-         Evenness = diversity(data_rarefied, index = "shannon") / log(specnumber(data_rarefied))
+  tibble(Sample_ID = rownames(All$Matrix),
+         Richness = specnumber(All$Matrix),
+         Shannon_Index = diversity(All$Matrix, index = "shannon"),
+         Simpson_Index = diversity(All$Matrix, index = "simpson"),
+         Evenness = diversity(All$Matrix, index = "shannon") / log(specnumber(All$Matrix))
        
        ) %>% 
-  left_join(select(WIDE, 1:7)) %>% 
+  left_join(select(All$Data, 1:5)) %>% 
   mutate(Month = factor(Month, levels = Months))
 
-Alpha_diversity %>%
+Alpha_diversity %>% 
+  pivot_longer(2:5, names_to = "Diversity_Index") %>% 
   ggplot() +
-  geom_boxplot(aes(Location, Shannon_Index, colour = Month))
-
-anova_model <- aov(Shannon_Index ~ Month * Type, data = Alpha_diversity)
-summary(anova_model)
-plot(anova_model)
-
-library(lme4)
-lmm_model <- lmer(Shannon_Index ~ Month + Type + (1 | Location), data = Alpha_diversity)
-summary(lmm_model)
-
-Alpha_diversity
+  geom_boxplot(aes(Location, value, colour = Month)) +
+  facet_wrap(~ Diversity_Index, scales = "free") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
 ```
 
 
+```{r}
+
+mod <- lmer(Shannon_Index ~ Month * Environment + (1 | Location), data = Alpha_diversity)
+summary(mod)
+Anova(mod)
+
+```
+Key Takeaways
+
+	•	Month has a significant impact on Shannon diversity, especially **in August and November, where diversity is lower in non-urban environments**.
+	•	The Environment alone (Urban vs. Non-Urban) does not have a strong direct effect on diversity.
+	•	Interaction between Month and Environment is significant in August and November, suggesting that seasonality affects diversity differently in urban and non-urban areas.
+
+```{r}
+mod <- lmer(Simpson_Index ~ Month * Environment + (1 | Location), data = Alpha_diversity)
+summary(mod)
+Anova(mod)
+```
+	•	Month shows a strong influence on Simpson diversity, with significantly lower diversity especially in August in non-urban areas.
+	•	The Environment factor alone (Urban vs. Non-Urban) does not substantially affect diversity.
+	•	Interaction between Month and Environment indicates that **urban environments have higher diversity compared to non-urban ones, notably in August and November**.
+
+```{r}
+mod <- lmer(Richness ~ Month * Environment + (1 | Location), data = Alpha_diversity)
+summary(mod)
+Anova(mod)
+```
+
+	•	Month significantly affects species richness, with **August and November showing notably lower richness compared to January**, especially in non-urban locations.
+	•	Environment alone has a significant negative effect on richness, **with urban areas showing lower richness than non-urban ones.**
+	•	Interaction between Month and Environment shows significant **increases in richness in urban areas in August and November**, suggesting seasonal peaks in urban diversity that offset the general negative effect of urbanization on richness.
+
+These results indicate that seasonality and environment jointly influence species richness, with unique richness peaks in urban environments during specific months.
+
+```{r}
+lmer(Evenness ~ Month * Environment + (1 | Location), data = Alpha_diversity) %>% 
+  summary()
+```
+
+	•	Month significantly affects evenness, with the largest **decrease of evenness seen in August**. May also shows a decline, though smaller.
+	•	Environment has a significant positive effect on evenness, suggesting that **urban areas generally show higher evenness in taxonomic distribution compared to non-urban areas**.
+	•	Interaction effects reveal that **urban areas particularly enhance evenness in August**, suggesting potential seasonal shifts in urban evenness levels.
+
+This model highlights that urban environments show higher evenness in taxonomic distribution, with seasonal patterns, particularly in August, showing the strongest interaction effects between month and environment.
 
 
 
