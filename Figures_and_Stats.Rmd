@@ -26,12 +26,12 @@ library(lme4)
 source("Code/Functions.R")
 
 
-### 1. READ IN DATA  #####
+### 1. READ IN AND MERGE SEQUENCE DATA  #####
 
-# Sequence data all
+# Reading in sequence table - all data sets.
 Species_table2023 <- read_csv("Data_import/Loic/12S_species_table.csv")
 
-# Metadata from the urban oceans project
+# Reading metadata from the Urban oceans project
 Metadata_UO <- read_excel("Data_import/Loic/VeDNA_UrbanOcean2023_sampledata.xlsx", 
     col_types = c("text", "text", "text", 
         "date", "text", "text", "numeric", 
@@ -43,10 +43,11 @@ Metadata_UO <- read_excel("Data_import/Loic/VeDNA_UrbanOcean2023_sampledata.xlsx
   select(Sample_ID, Event_ID, Type, Sample_Date, Station_ID, Location,
          Line_out_depth, Bottom_depth, Latitude, Longitude)
 
-# Metadata from the Fjords project
+# Reading metadata from the Fjords project
 Metadata_Fjords <- read_csv("Data_import/Loic/01_Metadata_all.csv", 
   col_types = cols(Year = col_number())) %>% 
   filter(Survey == "FJORDS_BIODIVERSITY") %>% 
+  # Make columns match the Urban Ocean Metadata
   transmute(Sample_ID = Hakai.ID,
             Event_ID = "Fjords",
             Type = "Fjords",
@@ -58,11 +59,12 @@ Metadata_Fjords <- read_csv("Data_import/Loic/01_Metadata_all.csv",
             Latitude = Lat,
             Longitude = Long
             )
+
 # Merge the two metadata sets
 Metadata2023 <- bind_rows(Metadata_UO, Metadata_Fjords)
 
 # Merge metadata with sequence data
-sp <- Species_table2023 %>% 
+sp <- Species_table2023 %>%
   select(!1) %>% 
   pivot_longer(!1:2, names_to = "Sample_ID", values_to = "Abundance")
 
@@ -71,35 +73,27 @@ All_12S_2023 <- Metadata2023 %>%
 
 
 
-#### 2. DATA MODIFICATIONS ######
+
+#### 2. DATA QUALITY AND MODIFICATIONS ######
 
 # Remove samples with low counts
 Good_OU_12S <- All_12S_2023 %>% 
   group_by(Sample_ID) %>%
-  filter(sum(Abundance)>10000) %>% 
+  filter(sum(Abundance)>10000) %>% # REMOVING SAMPLES WITH LESS THAN 10000 reads
   ungroup() %>% 
-  
-  filter(Line_out_depth == 0) %>%
+  # Remove certain unrelevant sample types
+  filter(Line_out_depth < 30) %>%
   filter(Type != "FieldBlank") %>% 
   filter(month(Sample_Date) != 1)
 
-
-# Data rarefaction:
+# Sample rarefaction to achieve equal sequencing depth
+# Imported from Functions.R
 Rarefied_UO_12S <- Good_OU_12S %>% 
-  select(Sample_ID, scientificName, Abundance) %>% 
-  pivot_wider(names_from = scientificName, values_from = Abundance, values_fill = 0) %>% 
-  column_to_rownames("Sample_ID") %>% 
-  rrarefy(sample = 10000) %>% 
-  as.data.frame() %>% 
-  rownames_to_column("Sample_ID") %>% 
-  pivot_longer(!1, names_to = "scientificName", values_to = "Abundance") %>% 
-  right_join(select(Good_OU_12S, !Abundance), by = c("scientificName", "Sample_ID"))
-
-
-
-
+  rarefy_sequence_depth(Sample_ID, scientificName, Abundance,
+                        sample_size = 10000)
 
 # Calculate eDNA index for all samples and species
+# Imported from Functions.R
 Indexed_UO_12S <- Rarefied_UO_12S %>% 
   index_RA(sample = Sample_ID,
            taxa = scientificName,
@@ -108,7 +102,8 @@ Indexed_UO_12S <- Rarefied_UO_12S %>%
            Bottom_depth, Latitude, Longitude, Type)
 
 
-# Rank species based on their mean relative sequence abundance, and filter low occuring species
+# Rank species based on their mean relative sequence abundance,
+# and filter low occurring species
 Rank <- Indexed_UO_12S %>% 
   group_by(scientificName) %>% 
   summarise(RA = mean(RA)) %>% 
@@ -120,6 +115,18 @@ Indexed_UO_12S <- Indexed_UO_12S %>%
 
 # Read in a scientific to common name translation
 common_names <- read_excel("Data_output/Common_names.xlsx")
+
+Indexed_UO_12S <- Indexed_UO_12S %>% 
+  mutate(Taxa = scientificName) %>% 
+  left_join(common_names, by = "Taxa") %>% 
+  filter(Fish == "Fish")
+
+
+
+# Make list of unique Species names
+all_species <- Indexed_UO_12S %>% 
+  pull(Name) %>%  unique()
+
 
 # Specify an order of sampling locations:
 location_order <- c(
@@ -148,100 +155,17 @@ location_names <- c(
   "Indian Arm"
   )
 
-# Make four sampling season categories
-Indexed_UO_12S <- Indexed_UO_12S %>% 
-  mutate(
-    Month =
-      ifelse(month(Sample_Date) == 2, "Feb/Mar",
-             ifelse(month(Sample_Date) == 3, "Feb/Mar",
-                    ifelse(month(Sample_Date) == 5, "May",
-                           ifelse(month(Sample_Date) == 8, "Aug",
-                                  ifelse(month(Sample_Date) == 8, "Aug",
-                                         ifelse(month(Sample_Date) == 11, "Nov",
-                                                "else"))))))) %>% 
-  mutate(Location = factor(Location, levels = location_order, labels = location_names))
-
-
-
-Indexed_UO_12S <- Indexed_UO_12S %>% 
-  mutate(Taxa = scientificName) %>% 
-  left_join(common_names, by = "Taxa") %>% 
-  filter(Fish == "Fish")
-
-
-
-
-
-
-
-
-# Make list of unique Species names
-all_species <- Indexed_UO_12S %>% 
-  pull(Name) %>%  unique()
-
-
-### PLOTTING FUNCTIONS ###
-
-# 1. Map function
-plotMat <- function(taxa, month, location) {
-  
-  mapplot = Indexed_UO_12S %>%
-    group_by(Location, Station_ID, Month, Name) %>%
-   summarise(RA_Index = mean(RA_Index),
-            RA = mean(RA),
-            Seq.abundance = sum(Abundance),
-            Longitude, Latitude) %>%
-  mutate(Popup = paste(Station_ID, "<br/>",
-                       "eDNA Index: ", round(RA_Index, digits = 3), "<br/>",
-                       "Relative Abundance: ", round(RA, digits = 3), "<br/>",
-                       "Number of sequences: ", Seq.abundance)) %>% 
-  
-  filter(Name == taxa,
-         Month == month) %>%
-  leaflet() %>%
-  addTiles() %>% 
-  addProviderTiles(providers$Esri.WorldImagery) %>%
-  #setView(-123.1, 49.30, zoom = 11) %>% 
-  addCircles(~Longitude, ~Latitude, popup = ~Popup,
-             weight = ~RA_Index*75, color = "red")
-  
-
-  if (location == "Vancouver") {
-    m <- mapplot %>%
-      setView(-123.1, 49.30, zoom = 11)
-    }
-  if (location == "Lower Mainland") {
-    m <- mapplot %>%
-      setView(-123.1, 49.45, zoom = 9)
-    }
-  if (location == "British Columbia") {
-    m <- mapplot %>%
-      setView(-125.1, 49.90, zoom = 6)
-  }
-  
-  return(m)
-
-}
-
-
-### END OF SERVER SCRIPT ####
-```
-
-# Beta diversity analysis
-
-## Functions
-```{r}
 Location_color <- c(
-  "Rivers Inlet" ='#c7eae5',
-  "Bute Inlet" = '#80cdc1',
-  "Toba Inlet" = '#35978f',
-  "Howe Sound" = '#01665e',
-  "Outer Harbour" = '#f6e8c3',
-  "False Creek" = '#dfc27d',
-  "Inner Harbour" = '#bf812d',
-  "Central Harbour" = '#8c510a',
-  "Port Moody Arm" = '#543005',
-  "Indian Arm" = '#003c30'
+  "Rivers Inlet" ='#276419',
+  "Bute Inlet" = '#4d9221',
+  "Toba Inlet" = '#7fbc41',
+  "Howe Sound" = '#b8e186',
+  "Outer Harbour" = '#8e0152',
+  "False Creek" = '#c51b7d',
+  "Inner Harbour" = '#de77ae',
+  "Central Harbour" = '#f1b6da',
+  "Port Moody Arm" = '#fde0ef',
+  "Indian Arm" = '#e6f5d0'
 )
 
 Significant_color <- c(
@@ -265,137 +189,59 @@ Fjords <- c(
   "Indian Arm"
 )
 
+
+# Make four sampling season categories
+Indexed_UO_12S <- Indexed_UO_12S %>% 
+  mutate(
+    Month =
+      ifelse(month(Sample_Date) == 2, "Feb/Mar",
+             ifelse(month(Sample_Date) == 3, "Feb/Mar",
+                    ifelse(month(Sample_Date) == 5, "May",
+                           ifelse(month(Sample_Date) == 8, "Aug",
+                                  ifelse(month(Sample_Date) == 8, "Aug",
+                                         ifelse(month(Sample_Date) == 11, "Nov",
+                                                "else"))))))) %>% 
+  mutate(Location = factor(Location, levels = location_order, labels = location_names)) %>% 
+  mutate(Environment = ifelse(Location %in% Fjords, "Fjords", "Urban")) %>% 
+  mutate(Depth = ifelse(Line_out_depth == 0, "Surf", "Sub"))
+
+
+
+
 Months <- Indexed_UO_12S %>%
   pull(Month) %>%  unique()
 
 Locations <- Indexed_UO_12S %>%
   pull(Location) %>%  unique()
 
+# END OF DATA MODIFICATIONs. USE Indexed_UO_12S for analysis.
 ```
 
+# Diversity Analysis
+
+Using a set of "vegdist functions" from ./Code/Functions.R
+
+## Global Analysis (Urban and Fjords)
+
+### Plot NMDS function
 
 ```{r}
-Indexed_UO_12S
-```
-
-
-
-
-
-
-
-
-```{r}
-# This function will subset the dataset based on month and location,
-# and ordinate the data using NMDS.
-# Outputs of the function will be a list containint a community matrix,
-# a dataframe with sample variables, an NMDS model with sample scores,
-# and species scores
-
-
-
-model_NMDS <- function(month, location, norm = "eDNA-index") {
-
-  tmp <- Indexed_UO_12S %>% 
-    mutate(Environment = ifelse(Location %in% Fjords, "Fjords", "Urban"))
-
-
-  if (norm == "eDNA-index") {
-    wide <- tmp %>%
-      filter(Month %in% month,
-             Location %in% location) %>%
-      select(Sample_ID, Month, Station_ID, Location, Environment, RA_Index, Name_1) %>%
-      pivot_wider(names_from = Name_1, values_from = RA_Index)
-  } else {
-    wide <- tmp %>%
-      filter(Month %in% month,
-             Location %in% location) %>%
-      select(Sample_ID, Month, Station_ID, Location, Environment, RA, Name_1) %>%
-      pivot_wider(names_from = Name_1, values_from = RA)
-  }
-  
-  # Extract Matrix
-  mat <- wide %>%
-    select(!2:5) %>% 
-    column_to_rownames("Sample_ID") %>% 
-    as.matrix()
-  
-  # Run NMDS
-  mod <- metaMDS(mat, trymax = 100, trace = FALSE)
-  
-  # Extract Scores back to matri
-  Species_scores <- 
-    scores(mod)$species %>% 
-    as.data.frame() %>%
-    rownames_to_column("Species")
-  
-  Sample_scores <-
-    scores(mod)$sites %>% 
-    as.data.frame() %>%
-    rownames_to_column("Sample_ID") %>% 
-    left_join(select(wide, 1:5), by = "Sample_ID")
-  
-  list(Data = wide,
-       Matrix = mat,
-       Model = mod,
-       Sample_scores = Sample_scores,
-       Species_scores = Species_scores,
-       Permanova_tab = NULL)
-}
-
-# Adding Simper results to the list produced above:
-
-model_simper <- function(NMDS_list) {
-  
-  simper_result <- simper(NMDS_list$Matrix,
-                          NMDS_list$Data$Environment) %>%
-    summary()
-  
-  Simper_tab <-
-    simper_result$Fjords_Urban %>%
-    rownames_to_column("Species") %>%
-    mutate(Significant = ifelse(p < 0.05, "Yes", "No"))
-  
-  NMDS_list$Species_scores <- 
-    NMDS_list$Species_scores %>%
-    left_join(Simper_tab)
-  
-  
-  return(NMDS_list)
-}
-
-
-# Permanova model of NMDS_list
-
-model_permanova <- function(NMDS_list) {
-  
-  NMDS_list$Permanova_tab <-
-    adonis2(NMDS_list$Matrix ~ Location,
-            data = NMDS_list$Data,
-            permutations = 999, method="bray") %>% 
-  tidy()
-  
-  return(NMDS_list)
-}
-
-
-# Plot_NMDS_list
-
-plot_NMDS <- function(NMDS_list, min.sp.cont = 1, max.p = 0.05) {
+# 
+plot_NMDS <- function(veglist, min.sp.cont = 0.02, max.p = 0.05) {
 
   ggplot() +
-    geom_point(data = NMDS_list$Sample_scores,
+    geom_point(data = veglist$sample_scores,
                mapping = aes(NMDS1, NMDS2, colour = Location),
                size = 2) +
     scale_color_manual(values = Location_color) +
     
-    stat_ellipse(data = NMDS_list$Sample_scores,
+    stat_ellipse(data = veglist$sample_scores,
                  aes(NMDS1, NMDS2, linetype = Environment), level = 0.95) +
     
     ggnewscale::new_scale_color() +
     scale_color_manual(values = Significant_color) +
     
-    geom_text(data = filter(NMDS_list$Species_scores,
+    geom_text(data = filter(veglist$species_scores,
                             average > min.sp.cont | p <= max.p),
               mapping = aes(NMDS1, NMDS2, label = Species,
                             size = average, color = Significant)) +
@@ -405,16 +251,17 @@ plot_NMDS <- function(NMDS_list, min.sp.cont = 1, max.p = 0.05) {
     theme(aspect.ratio = 1,
           panel.border = element_rect(colour = "black", fill=NA)) 
 }
+```
 
+### Plot dendrogram function
 
-
-
+```{r}
 # Plot dendrogram
-plot_hclust <- function(NMDS_list) {
+plot_hclust <- function(veglist) {
   
   # Step 1: Create distance matrix and hierarchical clustering
   # Step 2: Convert hclust to dendrogram and then to ggplot-friendly format
-  dend_data <- NMDS_list$Matrix %>% 
+  dend_data <- veglist$mat %>% 
     vegdist() %>% 
     hclust() %>% 
     dendro_data()
@@ -422,11 +269,8 @@ plot_hclust <- function(NMDS_list) {
   # Step 3: Join location information to the dendrogram segments
   # Create a data frame that maps each segment to a location
   segment_data <- dend_data$labels %>% 
-    left_join(NMDS_list$Data, by = c("label" = "Sample_ID"))
-  
-  
-  # Map colors based on Location
-  Location_color
+    left_join(veglist$dat, by = c("label" = colnames(veglist$dat)[1]))
+
   
   # Step 4: Plot dendrogram in ggplot
   ggplot() +
@@ -441,64 +285,504 @@ plot_hclust <- function(NMDS_list) {
   
 }
 
-
-
-
-
-
 ```
 
 
-
-
-## Global Analysis (Urban and Fjords)
 
 ### All months
 
+Investigating all locations, months, and depths. Summarizing stats:
+
 ```{r}
-All <- model_NMDS(Months, Locations, "eDNA-index") %>% 
-  model_simper()
-
-All$Species_scores %>% 
-  filter(p < 0.05) %>% 
-  arrange(desc(average))
-  
-
-
-ind_mod <- multipatt(All$Matrix, All$Data$Environment, func = "IndVal.g")
-summary(ind_mod)
+veglist_ALL <- Indexed_UO_12S %>%
+  filter(Location %in% Urban) %>% 
+  tidy_to_vegan(Sample_ID, Name_1, RA_Index,
+                Sample_Date, Location, Location, Depth,
+                Latitude, Longitude, Month, Environment) %>% 
+  veglist_NMDS() %>% 
+  veglist_SIMPER(group = NULL)
 ```
 
-
+What is the overall effect of Season VS Urban environments?
 ```{r}
-# NMDS
-plot_NMDS(All, min.sp.cont = 0.05, max.p = 0.05)
+# Highlight Urban Environment
+Env <- ggplot() +
+    geom_point(data =  veglist_ALL$sample_scores,
+               mapping = aes(NMDS1, NMDS2, colour = Location),
+               size = 1) +
+    scale_color_manual(values = Location_color) +
+stat_ellipse(data = veglist$sample_scores,
+                 aes(NMDS1, NMDS2, linetype = Environment), level = 0.95, alpha = 0.5) +
+  theme_minimal_grid(8) +
+  theme(aspect.ratio = 1,
+        panel.border = element_rect(colour = "black", fill=NA),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())
 
+Env  
+ggsave("Figure_output/All_Env.pdf", width = 4, height = 3.5)
 
-# Permanova
-perm_all <- adonis2(All$Matrix ~ Location * Month,
-            data = All$Data,
+# Highlight Seasons
+Month <- ggplot() +
+    geom_point(data =  veglist_ALL$sample_scores,
+               mapping = aes(NMDS1, NMDS2, colour = Month),
+               size = 1) +
+stat_ellipse(data = veglist$sample_scores,
+                 aes(NMDS1, NMDS2, linetype = Month), level = 0.95, alpha = 0.5) +
+  theme_minimal_grid(8) +
+  theme(aspect.ratio = 1,
+        panel.border = element_rect(colour = "black", fill=NA),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank()) +
+  scale_color_manual(values = c("#3288BD", "#A6D96A", "#F46D43", "#40004B"))
+
+ggsave("Figure_output/All_Month.pdf", width = 4, height = 3.5)
+
+Month
+
+All_perm <- adonis2(veglist_ALL$mat ~ Environment * Month,
+            data = veglist_ALL$dat,
             permutations = 999, method="bray") %>%
   tidy()
-perm_all
 
-# Dispersion analysis
-dispersion <- All$Matrix %>% 
-  vegdist(method = "bray") %>% 
-  betadisper(group = All$Data$Environment)
 
-boxplot(dispersion, main = "Beta Dispersion by Group")
-permutest(dispersion)
 
-# Indicator species analysis
-ind_mod <- multipatt(All$Matrix, All$Data$Environment, func = "IndVal.g")
-summary(ind_mod)
+# Save kable as an HTML table
+knitr::kable(All_perm, format = "html", caption = "PERMANOVA Results") %>% 
+  writeLines("Figure_output/All_perm_table.html")
 
-All <- model_NMDS(Months, Locations, "eDNA-index")
-All$Species_scores
 ```
 
-### Feb 
+Plot months with overlay of varying species.
+
+```{r}
+
+min.sp.cont = 0.015
+max.p = 0.00
+
+ggplot() +
+  geom_point(data =  veglist_ALL$sample_scores,
+               mapping = aes(NMDS1, NMDS2, colour = Location),
+               size = 2) +
+  #scale_color_manual(values = Location_color) +
+    
+    ggnewscale::new_scale_color() +
+    scale_color_manual(values = Significant_color) +
+    
+    ggrepel::geom_text_repel(data = filter(veglist$species_scores,
+                            average > min.sp.cont | p <= max.p),
+              mapping = aes(NMDS1, NMDS2, label = Species,
+                            size = average, color = Significant)) +
+    theme_minimal_grid(8) +
+  scale_size_continuous(range = c(1, 3)) +  # Set desired min and max text sizes here
+  theme(aspect.ratio = 1,
+        panel.border = element_rect(colour = "black", fill=NA),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())
+
+ggsave("Figure_output/NMDS_all.pdf", width = 5, height = 5)
+
+```
+
+Add indicator species
+
+```{r}
+ind_mod <- multipatt(veglist_ALL$mat, veglist_ALL$dat$Environment, func = "IndVal.g")
+summary(ind_mod)
+
+ind_mod$sign %>% 
+  filter(index == 2) %>%
+  select(!1:3) %>% 
+  rownames_to_column("Species") %>%
+  arrange(desc(stat)) %>% 
+  knitr::kable(format = "html", caption = "Species Associated to Urban Oceans") %>% 
+  writeLines("Figure_output/All_Ocean_Indicators.html")
+
+ind_mod$sign %>% 
+  filter(index == 1) %>%
+  select(!1:3) %>% 
+  rownames_to_column("Species") %>%
+  arrange(desc(stat)) %>% 
+  knitr::kable(format = "html", caption = "Species Associated to Fjords") %>% 
+  writeLines("Figure_output/All_Fjords_Indicators.html")
+
+```
+
+
+Looking at dispersion: no significant dispersion.
+```{r}
+
+veglist_Disp <- Indexed_UO_12S %>%
+  tidy_to_vegan(Sample_ID, Name_1, Abundance,
+                Sample_Date, Location, Location, Depth,
+                Latitude, Longitude, Month, Environment)
+# Dispersion analysis
+dispersion <- veglist_Disp$mat %>% 
+  vegdist(method = "bray") %>% 
+  betadisper(group = veglist_Disp$dat$Environment)
+
+boxplot(dispersion, main = "Beta Dispersion")
+permutest(dispersion)
+
+veglist_Disp
+
+# Open a PNG device
+pdf("Figure_output/beta_dispersion_plot.pdf", width = 3, height = 3)
+
+# Create the boxplot
+boxplot(dispersion, main = "Beta Dispersion")
+
+# Close the device to save the file
+dev.off()
+```
+
+### Per-month analysis
+
+Prepare datasets:
+```{r}
+# Wrapper:
+
+veglist_month <- function(month) {
+  
+  veglist <- Indexed_UO_12S %>%
+    filter(Location %in% Urban) %>%
+    filter(Month == month) %>% 
+    tidy_to_vegan(Sample_ID, Name_1, RA_Index,   # Index or Relative abundance??
+                  Sample_Date, Location, Location, Depth,
+                  Latitude, Longitude, Month, Environment) %>% 
+    veglist_NMDS() %>% 
+    veglist_SIMPER(group = .$dat$Environment)
+
+}
+
+veglist_Feb <- veglist_month("Feb/Mar")
+veglist_May <- veglist_month("May")
+veglist_Aug <- veglist_month("Aug")
+veglist_Nov <- veglist_month("Nov")
+```
+
+Plot NMDS
+
+```{r}
+
+biplot_month <- function(veglist, min.sp.cont = 1, max.p = 0.01) {
+  
+  ggplot() +
+  geom_point(data =  veglist$sample_scores,
+               mapping = aes(NMDS1, NMDS2, colour = Location),
+               size = 1) +
+  #scale_color_manual(values = Location_color) +
+    
+    stat_ellipse(data = veglist$sample_scores,
+                 aes(NMDS1, NMDS2, linetype = Location), level = 0.95, alpha = 0.5) +
+    
+
+
+    
+    ggrepel::geom_text_repel(data = filter(veglist$species_scores,
+                            average > min.sp.cont),
+              mapping = aes(NMDS1, NMDS2, label = Species,
+                            size = average)) +
+    
+  scale_size_continuous(range = c(1, 3)) +  # Set desired min and max text sizes here
+ theme_minimal_grid(12) +
+     theme(aspect.ratio = 1,
+        panel.border = element_rect(colour = "black", fill=NA),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())
+}
+
+
+nmds_Feb <- biplot_month(veglist_Feb)
+nmds_May <- biplot_month(veglist_May)
+nmds_Aug <- biplot_month(veglist_Aug)
+nmds_Nov <- biplot_month(veglist_Nov)
+nmds_Feb
+ggarrange(nmds_Feb, nmds_May, nmds_Aug, nmds_Nov, common.legend = TRUE, legend = "right")
+ggsave("Figure_output/NMDS_months.pdf", width = 5, height = 4)
+
+```
+### Sample rarefaction curves
+
+Urban Ocean Only
+
+```{r}
+UO_ab <- Indexed_UO_12S %>%
+  filter(Environment == "Urban") %>% 
+  tidy_to_vegan(Sample_ID, Name_1, Abundance,
+                Sample_Date, Location, Location, Depth,
+                Latitude, Longitude, Month, Environment)
+
+# Calculate species accumulation curve
+spec_accum <- specaccum(UO_ab$mat, method = "random", permutations = 100)
+
+# Extract results into a data frame
+spec_accum_df <- data.frame(
+  Samples = spec_accum$sites,
+  Richness = spec_accum$richness,
+  SD = spec_accum$sd
+)
+
+# Calculate upper and lower confidence intervals
+spec_accum_df$Richness_upper <- spec_accum_df$Richness + spec_accum_df$SD
+spec_accum_df$Richness_lower <- spec_accum_df$Richness - spec_accum_df$SD
+
+
+
+ggplot(spec_accum_df, aes(x = Samples, y = Richness)) +
+  geom_line(color = "blue", linewidth = 1) +
+  geom_ribbon(aes(ymin = Richness_lower, ymax = Richness_upper), alpha = 0.2) +
+  labs(
+    x = "Number of Samples",
+    y = "Species Richness",
+    title = "Sample-Based Rarefaction Curve"
+  ) +
+   theme_minimal_grid(8) +
+     theme(aspect.ratio = 1,
+        panel.border = element_rect(colour = "black", fill=NA))
+        #panel.grid.major = element_blank(),
+        #panel.grid.minor = element_blank())
+
+ggsave("Figure_output/Sample_Rarefaction.pdf")
+
+```
+
+# Alpha diversity analysis
+
+```{r}
+All_Absolute <- Indexed_UO_12S %>%
+  #filter(Environment == "Urban") %>% 
+  tidy_to_vegan(Sample_ID, Name_1, RA,
+                Sample_Date, Location, Location, Depth,
+                Latitude, Longitude, Month, Environment)
+
+Alpha_diversity <-
+  tibble(Sample_ID = rownames(All_Absolute$mat),
+         Richness = specnumber(All_Absolute$mat),
+         Shannon_Index = diversity(All_Absolute$mat, index = "shannon"),
+         Simpson_Index = diversity(All_Absolute$mat, index = "simpson"),
+         Evenness = diversity(All_Absolute$mat, index = "shannon") / log(specnumber(All_Absolute$mat))
+       ) %>% 
+  left_join(All_Absolute$dat) %>% 
+  mutate(Month = factor(Month, levels = Months))
+
+Alpha_diversity %>% 
+  pivot_longer(2:5, names_to = "Diversity_Index") %>% 
+  ggplot() +
+  geom_boxplot(aes(Location, value, colour = Month)) +
+  facet_wrap(~ Diversity_Index, scales = "free") +
+  
+  theme_minimal_grid(8) +
+     theme(aspect.ratio = 1/2, 
+        panel.border = element_rect(colour = "black", fill=NA)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+ggsave("Figure_output/Alpha_Diversity.PDF")
+
+```
+
+
+```{r}
+
+mod <- lmer(Shannon_Index ~ Month * Environment + (1 | Location), data = Alpha_diversity)
+summary(mod)
+Anova(mod)
+
+```
+Key Takeaways
+
+	•	Month has a significant impact on Shannon diversity, especially **in August and November, where diversity is lower in non-urban environments**.
+	•	The Environment alone (Urban vs. Non-Urban) does not have a strong direct effect on diversity.
+	•	Interaction between Month and Environment is significant in August and November, suggesting that seasonality affects diversity differently in urban and non-urban areas.
+
+```{r}
+mod <- lmer(Simpson_Index ~ Month * Environment + (1 | Location), data = Alpha_diversity)
+summary(mod)
+Anova(mod)
+```
+	•	Month shows a strong influence on Simpson diversity, with significantly lower diversity especially in August in non-urban areas.
+	•	The Environment factor alone (Urban vs. Non-Urban) does not substantially affect diversity.
+	•	Interaction between Month and Environment indicates that **urban environments have higher diversity compared to non-urban ones, notably in August and November**.
+
+```{r}
+mod <- lmer(Richness ~ Month * Environment + (1 | Location), data = Alpha_diversity)
+summary(mod)
+Anova(mod)
+```
+
+	•	Month significantly affects species richness, with **August and November showing notably lower richness compared to January**, especially in non-urban locations.
+	•	Environment alone has a significant negative effect on richness, **with urban areas showing lower richness than non-urban ones.**
+	•	Interaction between Month and Environment shows significant **increases in richness in urban areas in August and November**, suggesting seasonal peaks in urban diversity that offset the general negative effect of urbanization on richness.
+
+These results indicate that seasonality and environment jointly influence species richness, with unique richness peaks in urban environments during specific months.
+
+```{r}
+lmer(Evenness ~ Month * Environment + (1 | Location), data = Alpha_diversity) %>% 
+  summary()
+```
+
+	•	Month significantly affects evenness, with the largest **decrease of evenness seen in August**. May also shows a decline, though smaller.
+	•	Environment has a significant positive effect on evenness, suggesting that **urban areas generally show higher evenness in taxonomic distribution compared to non-urban areas**.
+	•	Interaction effects reveal that **urban areas particularly enhance evenness in August**, suggesting potential seasonal shifts in urban evenness levels.
+
+This model highlights that urban environments show higher evenness in taxonomic distribution, with seasonal patterns, particularly in August, showing the strongest interaction effects between month and environment.
+
+
+# Urban Ocean Specific
+
+## All data
+
+Investigating all locations, months, and depths. Summarizing stats:
+
+```{r}
+veglist_Urban <- Indexed_UO_12S %>%
+  filter(Location %in% c(
+    "Port Moody Arm",
+    "Central Harbour",
+    "Inner Harbour",
+    "Outer Harbour",
+    "False Creek",
+    "Indian Arm")) %>%
+  
+  tidy_to_vegan(Sample_ID, Name_1, RA,
+                Sample_Date, Location, Location, Depth,
+                Latitude, Longitude, Month, Environment) %>% 
+  veglist_NMDS() %>% 
+  veglist_SIMPER(group = NULL)
+
+
+```
+
+What is the overall effect of Season VS Location?
+```{r}
+# Highlight Loctions
+Env <- ggplot() +
+    geom_point(data =  veglist_Urban$sample_scores,
+               mapping = aes(NMDS1, NMDS2, colour = Location,
+                             shape = Depth),
+               size = 1) +
+    #scale_color_manual(values = Location_color) +
+stat_ellipse(data = veglist_Urban$sample_scores,
+                 aes(NMDS1, NMDS2, linetype = Location), level = 0.95, alpha = 0.5) +
+  theme_minimal_grid(8) +
+  theme(aspect.ratio = 1,
+        panel.border = element_rect(colour = "black", fill=NA),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())
+
+Env  
+ggsave("Figure_output/NMDS_Urb_Location.pdf", width = 4, height = 3.5)
+
+# Highlight Seasons
+Month <- ggplot() +
+    geom_point(data =  veglist_Urban$sample_scores,
+               mapping = aes(NMDS1, NMDS2, colour = Month),
+               size = 1) +
+stat_ellipse(data = veglist_Urban$sample_scores,
+                 aes(NMDS1, NMDS2, linetype = Month), level = 0.95, alpha = 0.5) +
+  theme_minimal_grid(8) +
+  theme(aspect.ratio = 1,
+        panel.border = element_rect(colour = "black", fill=NA),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank()) +
+  scale_color_manual(values = c("#3288BD", "#A6D96A", "#F46D43", "#40004B"))
+
+ggsave("Figure_output/NMDS_Urban_Month.pdf", width = 4, height = 3.5)
+
+Month
+
+All_perm <- adonis2(veglist_ALL$mat ~ Location * Month * Depth,
+            data = veglist_ALL$dat,
+            permutations = 999, method="bray") %>%
+  tidy()
+
+All_perm
+
+# Save kable as an HTML table
+knitr::kable(All_perm, format = "html", caption = "PERMANOVA Results") %>% 
+  writeLines("Figure_output/Urban_perm_table.html")
+
+```
+## Per-month analysis
+
+Prepare datasets:
+```{r}
+# Wrapper:
+
+veglist_month <- function(month) {
+  
+  veglist <- Indexed_UO_12S %>%
+    filter(Location %in% c(
+    "Port Moody Arm",
+    "Central Harbour",
+    "Inner Harbour",
+    "Outer Harbour",
+    "False Creek",
+    "Indian Arm")) %>%
+    filter(Month == month) %>% 
+    tidy_to_vegan(Sample_ID, Name_1, RA_Index,   # Index or Relative abundance??
+                  Sample_Date, Location, Location, Depth,
+                  Latitude, Longitude, Month, Environment) %>% 
+    veglist_NMDS() %>% 
+    veglist_SIMPER(group = NULL)
+
+}
+
+veglist_Feb <- veglist_month("Feb/Mar")
+veglist_May <- veglist_month("May")
+veglist_Aug <- veglist_month("Aug")
+veglist_Nov <- veglist_month("Nov")
+```
+
+Plot NMDS
+
+```{r}
+
+biplot_month <- function(veglist, min.sp.cont = 0.02, max.p = 0.01) {
+  
+  ggplot() +
+  geom_point(data =  veglist$sample_scores,
+               mapping = aes(NMDS1, NMDS2, colour = Location, shape = Depth),
+               size = 1) +
+  #scale_color_manual(values = Location_color) +
+    
+    stat_ellipse(data = veglist$sample_scores,
+                 aes(NMDS1, NMDS2, linetype = Depth), level = 0.90, alpha = 0.2) +
+    
+
+
+    
+    ggrepel::geom_text_repel(data = filter(veglist$species_scores,
+                            average > min.sp.cont),
+              mapping = aes(NMDS1, NMDS2, label = Species,
+                            size = average)) +
+    
+  scale_size_continuous(range = c(1, 3)) +  # Set desired min and max text sizes here
+ theme_minimal_grid(8) +
+     theme(aspect.ratio = 1,
+        panel.border = element_rect(colour = "black", fill=NA),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank()) +
+    labs(title = unique(veglist$sample_scores$Month))
+}
+
+
+nmds_Feb <- biplot_month(veglist_Feb)
+nmds_May <- biplot_month(veglist_May)
+nmds_Aug <- biplot_month(veglist_Aug)
+nmds_Nov <- biplot_month(veglist_Nov)
+
+ggarrange(nmds_Feb, nmds_May, nmds_Aug, nmds_Nov, common.legend = TRUE, legend = "right")
+ggsave("Figure_output/NMDS_months.pdf", width = 5, height = 4)
+
+```
+
+
+
+# Old
+
+
+
 ```{r}
 Feb <- model_NMDS("Feb/Mar", Locations, "Relative Abundance") %>% 
   model_simper()
@@ -637,6 +921,8 @@ Anova(mod)
 
 Alpha_diversity
 ```
+
+
 ```{r}
 UO <- model_NMDS("Aug", Urban, "R")
 ind_mod <- multipatt(UO$Matrix, UO$Data$Location, func = "IndVal.g")
@@ -714,80 +1000,6 @@ geom_point(data = NMDS_list$Sample_scores,
 
 
 
-
-
-
-# Alpha diversity analysis
-
-## All months
-
-```{r}
-All <- model_NMDS(Months, Locations, "Relative Abundance")
-
-Alpha_diversity <-
-  tibble(Sample_ID = rownames(All$Matrix),
-         Richness = specnumber(All$Matrix),
-         Shannon_Index = diversity(All$Matrix, index = "shannon"),
-         Simpson_Index = diversity(All$Matrix, index = "simpson"),
-         Evenness = diversity(All$Matrix, index = "shannon") / log(specnumber(All$Matrix))
-       
-       ) %>% 
-  left_join(select(All$Data, 1:5)) %>% 
-  mutate(Month = factor(Month, levels = Months))
-
-Alpha_diversity %>% 
-  pivot_longer(2:5, names_to = "Diversity_Index") %>% 
-  ggplot() +
-  geom_boxplot(aes(Location, value, colour = Month)) +
-  facet_wrap(~ Diversity_Index, scales = "free") +
-  theme(axis.text.x = element_text(angle = 90, hjust = 1))
-```
-
-
-```{r}
-
-mod <- lmer(Shannon_Index ~ Month * Environment + (1 | Location), data = Alpha_diversity)
-summary(mod)
-Anova(mod)
-
-```
-Key Takeaways
-
-	•	Month has a significant impact on Shannon diversity, especially **in August and November, where diversity is lower in non-urban environments**.
-	•	The Environment alone (Urban vs. Non-Urban) does not have a strong direct effect on diversity.
-	•	Interaction between Month and Environment is significant in August and November, suggesting that seasonality affects diversity differently in urban and non-urban areas.
-
-```{r}
-mod <- lmer(Simpson_Index ~ Month * Environment + (1 | Location), data = Alpha_diversity)
-summary(mod)
-Anova(mod)
-```
-	•	Month shows a strong influence on Simpson diversity, with significantly lower diversity especially in August in non-urban areas.
-	•	The Environment factor alone (Urban vs. Non-Urban) does not substantially affect diversity.
-	•	Interaction between Month and Environment indicates that **urban environments have higher diversity compared to non-urban ones, notably in August and November**.
-
-```{r}
-mod <- lmer(Richness ~ Month * Environment + (1 | Location), data = Alpha_diversity)
-summary(mod)
-Anova(mod)
-```
-
-	•	Month significantly affects species richness, with **August and November showing notably lower richness compared to January**, especially in non-urban locations.
-	•	Environment alone has a significant negative effect on richness, **with urban areas showing lower richness than non-urban ones.**
-	•	Interaction between Month and Environment shows significant **increases in richness in urban areas in August and November**, suggesting seasonal peaks in urban diversity that offset the general negative effect of urbanization on richness.
-
-These results indicate that seasonality and environment jointly influence species richness, with unique richness peaks in urban environments during specific months.
-
-```{r}
-lmer(Evenness ~ Month * Environment + (1 | Location), data = Alpha_diversity) %>% 
-  summary()
-```
-
-	•	Month significantly affects evenness, with the largest **decrease of evenness seen in August**. May also shows a decline, though smaller.
-	•	Environment has a significant positive effect on evenness, suggesting that **urban areas generally show higher evenness in taxonomic distribution compared to non-urban areas**.
-	•	Interaction effects reveal that **urban areas particularly enhance evenness in August**, suggesting potential seasonal shifts in urban evenness levels.
-
-This model highlights that urban environments show higher evenness in taxonomic distribution, with seasonal patterns, particularly in August, showing the strongest interaction effects between month and environment.
 
 
 
@@ -1009,4 +1221,50 @@ adonis2(mat ~ Location,
 }
 ```
 
+```{r}
+### PLOTTING FUNCTIONS ###
 
+# 1. Map function
+plotMat <- function(taxa, month, location) {
+  
+  mapplot = Indexed_UO_12S %>%
+    group_by(Location, Station_ID, Month, Name) %>%
+   summarise(RA_Index = mean(RA_Index),
+            RA = mean(RA),
+            Seq.abundance = sum(Abundance),
+            Longitude, Latitude) %>%
+  mutate(Popup = paste(Station_ID, "<br/>",
+                       "eDNA Index: ", round(RA_Index, digits = 3), "<br/>",
+                       "Relative Abundance: ", round(RA, digits = 3), "<br/>",
+                       "Number of sequences: ", Seq.abundance)) %>% 
+  
+  filter(Name == taxa,
+         Month == month) %>%
+  leaflet() %>%
+  addTiles() %>% 
+  addProviderTiles(providers$Esri.WorldImagery) %>%
+  #setView(-123.1, 49.30, zoom = 11) %>% 
+  addCircles(~Longitude, ~Latitude, popup = ~Popup,
+             weight = ~RA_Index*75, color = "red")
+  
+
+  if (location == "Vancouver") {
+    m <- mapplot %>%
+      setView(-123.1, 49.30, zoom = 11)
+    }
+  if (location == "Lower Mainland") {
+    m <- mapplot %>%
+      setView(-123.1, 49.45, zoom = 9)
+    }
+  if (location == "British Columbia") {
+    m <- mapplot %>%
+      setView(-125.1, 49.90, zoom = 6)
+  }
+  
+  return(m)
+
+}
+
+
+### END OF SERVER SCRIPT ####
+```
