@@ -779,6 +779,101 @@ ggsave("Figure_output/NMDS_months.pdf", width = 5, height = 4)
 
 
 
+## Barplots
+
+```{r}
+plot_bars <- function(spec_list) {
+  
+  Indexed_UO_12S %>%
+  filter(Name_1 %in% spec_list) %>% 
+    filter(Location %in% c(
+    "Port Moody Arm",
+    "Central Harbour",
+    "Inner Harbour",
+    "Outer Harbour",
+    "False Creek",
+    "Indian Arm")) %>%
+  mutate(Month = factor(Month, levels = c(
+      "Feb/Mar",
+      "May",
+      "Aug",
+      "Nov"
+    ))) %>%
+    mutate(Name_1 = factor(Name_1, levels = spec_list)) %>% 
+      
+    ggplot() +
+    geom_boxplot(aes(Location, RA_Index, fill = Location), position = "dodge") +
+    facet_grid(Name_1 ~ Month) +
+     theme_minimal_grid(10) +
+     theme(#aspect.ratio = 1,
+        panel.border = element_rect(colour = "black", fill=NA),
+        #panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank()) +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) #+
+    #scale_fill_manual(values = c("#3288BD", "#A6D96A", "#F46D43", "#40004B"))
+
+}
+```
+
+### Salmonids
+```{r}
+plot_bars(c("Chum salmon",
+            "Pink salmon",
+            "Coho salmon",
+            "Chinook salmon",
+            "Sockeye salmon",
+            "Unidintified species in the salmon subfamily"))
+```
+
+### Pelagic Fish
+```{r}
+plot_bars(c("Pacific herring",
+            "Northern anchovy",
+            "Eulachon",
+            "Surf smelt",
+            "Pacific sand lance",
+            "Alaska pollock",
+            "North pacific hake",
+            "Pacific cod"))
+
+```
+```{r}
+plot_bars(c("Brown rockfish",
+            "Quillback rockfish",
+            "Tiger rockfish",
+            "Cabezon",
+            "Lingcod",
+            "Scalyhead sculpin"))
+
+
+```
+
+
+```{r}
+plot_bars(c("C-O sole",
+            "English sole",
+            "Northern rock sole",
+            "Pacific sanddab",
+            "Rock sole",
+            "Slender sole",
+            "Starry flounder"
+            ))
+
+```
+```{r}
+
+```
+
+
+
+```{r}
+Indexed_UO_12S %>% pull(Name_1) %>% unique() %>% sort()
+```
+
+
+
+
+
 # Old
 
 

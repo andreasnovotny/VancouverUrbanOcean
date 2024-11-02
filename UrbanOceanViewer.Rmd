@@ -178,6 +178,12 @@ Good_OU_12S <- All_12S_2023 %>%
   filter(Type != "FieldBlank") %>% 
   filter(month(Sample_Date) != 1)
 
+# Sample rarefaction to achieve equal sequencing depth
+# Imported from Functions.R
+Rarefied_UO_12S <- Good_OU_12S %>% 
+  rarefy_sequence_depth(Sample_ID, scientificName, Abundance,
+                        sample_size = 10000)
+
 
 # Calculate eDNA index for all samples and species
 Indexed_UO_12S <- Good_OU_12S %>% 
