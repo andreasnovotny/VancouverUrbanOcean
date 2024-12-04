@@ -823,20 +823,25 @@ plot_bars(c("Chum salmon",
             "Chinook salmon",
             "Sockeye salmon",
             "Unidintified species in the salmon subfamily"))
+
+ggsave("Figure_output/Salmonids.pdf")
 ```
 
 ### Pelagic Fish
 ```{r}
 plot_bars(c("Pacific herring",
             "Northern anchovy",
+            "Three-spined stickleback",
             "Eulachon",
             "Surf smelt",
             "Pacific sand lance",
             "Alaska pollock",
             "North pacific hake",
             "Pacific cod"))
-
+ggsave("Figure_output/Other_Pelagic.pdf")
 ```
+
+### Rockfish
 ```{r}
 plot_bars(c("Brown rockfish",
             "Quillback rockfish",
@@ -848,27 +853,115 @@ plot_bars(c("Brown rockfish",
 
 ```
 
+### Flatfish
 
 ```{r}
-plot_bars(c("C-O sole",
+plot_bars(c(#"C-O sole",
             "English sole",
-            "Northern rock sole",
+            #"Northern rock sole",
             "Pacific sanddab",
-            "Rock sole",
-            "Slender sole",
+            #"Rock sole",
+            #"Slender sole",
             "Starry flounder"
             ))
 
+
+ggsave("Figure_output/Flatfish.pdf")
 ```
+
+
+
+
+### Intertidal and vegetated zone 
+
 ```{r}
+plot_bars(c(
+"Bay goby",
+#"Bay pipefish",
+"Crescent gunnel",
+#"Dolly Varden trout",
+"Gunnel",
+#"Kelp greenling",
+#"Kelp perch",
+"Peamouth",
+#"Pile perch",
+"Prickly sculpin",
+"Shiner perch",
+"Tidepool sculpin",
+"Saddleback gunnel"
+))
+
+ggsave("Figure_output/Intertidal.pdf")
 
 ```
 
+### Other benthic
+```{r}
+plot_bars(c(
+"Alaska plaice",
+"Buffalo sculpin",
+"Ceastrange sculpin",
+#"Northern smoothtongue",
+"Pacific staghorn sculpin",
+"Padded sculpin",
+#"Sharpnose sculpin",
+#"Smoothead sculpin",
+"Snake prickleback",
+"Speckled sanddab",
+#"C-O sole",
+            "English sole",
+            #"Northern rock sole",
+            #"Pacific sanddab",
+            #"Rock sole",
+            #"Slender sole",
+            "Starry flounder"
+#"Striped surfperch"
+))
 
+ggsave("Figure_output/Benthic.pdf")
+```
+
+
+
+## Alpha diversity
 
 ```{r}
-Indexed_UO_12S %>% pull(Name_1) %>% unique() %>% sort()
+All_Absolute <- Indexed_UO_12S %>%
+  filter(Location %in% c(
+    "Port Moody Arm",
+    "Central Harbour",
+    "Inner Harbour",
+    "Outer Harbour",
+    "False Creek",
+    "Indian Arm")) %>%
+  tidy_to_vegan(Sample_ID, Name_1, RA,
+                Sample_Date, Location, Location, Depth,
+                Latitude, Longitude, Month, Environment)
+
+Alpha_diversity <-
+  tibble(Sample_ID = rownames(All_Absolute$mat),
+         Richness = specnumber(All_Absolute$mat),
+         Shannon_Index = diversity(All_Absolute$mat, index = "shannon"),
+         Simpson_Index = diversity(All_Absolute$mat, index = "simpson"),
+         Evenness = diversity(All_Absolute$mat, index = "shannon") / log(specnumber(All_Absolute$mat))
+       ) %>% 
+  left_join(All_Absolute$dat) %>% 
+  mutate(Month = factor(Month, levels = Months))
+
+Alpha_diversity %>% 
+  pivot_longer(2:5, names_to = "Diversity_Index") %>% 
+  ggplot() +
+  geom_boxplot(aes(Location, value, fill = Location)) +
+  facet_grid(Diversity_Index ~ Month, scales = "free") +
+  
+  theme_minimal_grid(8) +
+     theme(aspect.ratio = 1/2, 
+        panel.border = element_rect(colour = "black", fill=NA)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+ggsave("Figure_output/Alpha_Diversity.PDF")
 ```
+
 
 
 
